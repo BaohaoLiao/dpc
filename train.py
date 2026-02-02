@@ -69,7 +69,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-total-limit", type=int, default=1)
     parser.add_argument("--report-to", default="none")
     parser.add_argument("--lr-scheduler", default="cosine")
-    parser.add_argument("--device-map", default="auto", help="Set to 'auto' for model parallelism")
+    parser.add_argument("--device-map", default=None, help="Set to 'auto' for model parallelism")
     parser.add_argument("--ratio-min", type=float, default=0.5)
     parser.add_argument("--ratio-max", type=float, default=3.0)
     parser.add_argument("--max-train-samples", type=int, default=None)
