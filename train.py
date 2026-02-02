@@ -59,6 +59,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--warmup-steps", type=int, default=0)
+    parser.add_argument("--warmup-ratio", type=float, default=0.0)
     parser.add_argument("--eval-split", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fp16", action="store_true", help="Enable fp16 training")
@@ -294,6 +296,8 @@ def main() -> None:
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         weight_decay=args.weight_decay,
+        warmup_steps=args.warmup_steps,
+        warmup_ratio=args.warmup_ratio,
         save_total_limit=args.save_total_limit,
         num_train_epochs=args.epochs,
         predict_with_generate=eval_ds is not None,
