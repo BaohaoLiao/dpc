@@ -73,6 +73,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-eval-samples", type=int, default=None)
     parser.add_argument("--disable-metrics", action="store_true")
+    parser.add_argument(
+        "--save-best",
+        action="store_true",
+        help="Save and load the best model at end using the eval metric.",
+    )
+    parser.add_argument("--metric-for-best-model", default="dpc_metric")
+    parser.add_argument("--greater-is-better", action="store_true", default=True)
     parser.add_argument("--resume-from-checkpoint", default=None)
     return parser
 
@@ -260,10 +267,26 @@ def main() -> None:
 
     use_metrics = not args.disable_metrics and eval_ds is not None
 
+    save_strategy = args.save_strategy
+    eval_strategy = "epoch" if eval_ds is not None else "no"
+    load_best_model_at_end = False
+    metric_for_best_model = None
+    greater_is_better = None
+
+    if args.save_best:
+        if eval_ds is None:
+            raise ValueError("--save-best requires an eval split (set --eval-split > 0).")
+        if save_strategy == "no":
+            save_strategy = "epoch"
+        eval_strategy = "epoch"
+        load_best_model_at_end = True
+        metric_for_best_model = args.metric_for_best_model
+        greater_is_better = args.greater_is_better
+
     training_args = Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
-        eval_strategy="epoch" if eval_ds is not None else "no",
-        save_strategy=args.save_strategy,
+        eval_strategy=eval_strategy,
+        save_strategy=save_strategy,
         learning_rate=args.learning_rate,
         fp16=args.fp16,
         per_device_train_batch_size=args.per_device_train_batch_size,
@@ -276,6 +299,9 @@ def main() -> None:
         logging_steps=args.logging_steps,
         report_to=args.report_to,
         lr_scheduler_type=args.lr_scheduler,
+        load_best_model_at_end=load_best_model_at_end,
+        metric_for_best_model=metric_for_best_model,
+        greater_is_better=greater_is_better,
     )
 
     trainer = Seq2SeqTrainer(
@@ -284,7 +310,7 @@ def main() -> None:
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         data_collator=data_collator,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         compute_metrics=build_compute_metrics(tokenizer) if use_metrics else None,
     )
 
