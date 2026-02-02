@@ -76,6 +76,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-eval-samples", type=int, default=None)
     parser.add_argument("--disable-metrics", action="store_true")
     parser.add_argument("--disable-tqdm", action="store_true")
+    parser.add_argument("--save-only-model", action="store_true")
     parser.add_argument(
         "--save-best",
         action="store_true",
@@ -308,6 +309,7 @@ def main() -> None:
         metric_for_best_model=metric_for_best_model,
         greater_is_better=greater_is_better,
         disable_tqdm=args.disable_tqdm,
+        save_only_model=args.save_only_model,
     )
 
     trainer = Seq2SeqTrainer(
