@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import gc
+import json
 import logging
 import math
+import os
 import re
 from typing import Optional, Tuple
 
@@ -28,6 +30,7 @@ from transformers import (
     DataCollatorForSeq2Seq,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
+    TrainerCallback,
     set_seed,
 )
 
@@ -211,6 +214,50 @@ def build_compute_metrics(tokenizer):
     return compute_metrics
 
 
+class SaveEvalPredictionsCallback(TrainerCallback):
+    def __init__(self, trainer: Seq2SeqTrainer, tokenizer, eval_ds: Dataset, output_dir: str):
+        self.trainer = trainer
+        self.tokenizer = tokenizer
+        self.eval_ds = eval_ds
+        self.output_dir = output_dir
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        if self.eval_ds is None:
+            return control
+
+        preds_output = self.trainer.predict(self.eval_ds)
+        preds = preds_output.predictions
+        labels = preds_output.label_ids
+
+        if isinstance(preds, tuple):
+            preds = preds[0]
+
+        decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
+        labels = np.where(labels != -100, labels, self.tokenizer.pad_token_id)
+        decoded_labels = self.tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+        epoch = state.epoch if state.epoch is not None else 0
+        epoch_idx = int(round(epoch)) if epoch is not None else 0
+        step = state.global_step
+
+        preds_dir = os.path.join(self.output_dir, "preds")
+        os.makedirs(preds_dir, exist_ok=True)
+        out_path = os.path.join(
+            preds_dir, f"eval-epoch-{epoch_idx:03d}-step-{step:06d}.jsonl"
+        )
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            for pred, label in zip(decoded_preds, decoded_labels):
+                record = {
+                    "prediction": pred.strip(),
+                    "reference": label.strip(),
+                }
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        logging.info("Saved eval predictions to %s", out_path)
+        return control
+
+
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -323,6 +370,10 @@ def main() -> None:
         processing_class=tokenizer,
         compute_metrics=build_compute_metrics(tokenizer) if use_metrics else None,
     )
+    if eval_ds is not None:
+        trainer.add_callback(
+            SaveEvalPredictionsCallback(trainer, tokenizer, eval_ds, args.output_dir)
+        )
 
     logging.info("Starting training")
     trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
