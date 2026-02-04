@@ -57,8 +57,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prefix", default=DEFAULT_PREFIX)
     parser.add_argument("--gen-max-length", type=int, default=None)
     parser.add_argument("--gen-num-beams", type=int, default=1)
-    parser.add_argument("--gen-min-length", type=int, default=None)
-    parser.add_argument("--gen-max-new-tokens", type=int, default=None)
 
     parser.add_argument("--per-device-train-batch-size", type=int, default=2)
     parser.add_argument("--per-device-eval-batch-size", type=int, default=2)
@@ -378,8 +376,6 @@ def main() -> None:
         save_only_model=args.save_only_model,
         generation_max_length=args.gen_max_length or args.max_length,
         generation_num_beams=args.gen_num_beams,
-        generation_min_length=args.gen_min_length,
-        generation_max_new_tokens=args.gen_max_new_tokens,
         ddp_find_unused_parameters=False,
     )
 
