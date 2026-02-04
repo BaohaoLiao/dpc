@@ -269,13 +269,6 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
     setup_logging()
-    logging.info(
-        "Generation settings: gen_max_length=%s, gen_min_length=%s, gen_max_new_tokens=%s, gen_num_beams=%s",
-        args.gen_max_length if args.gen_max_length is not None else args.max_length,
-        args.gen_min_length,
-        args.gen_max_new_tokens,
-        args.gen_num_beams,
-    )
 
     seed_everything(args.seed)
 
