@@ -72,6 +72,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-split", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fp16", action="store_true", help="Enable fp16 training")
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing to reduce memory usage",
+    )
     parser.add_argument("--logging-steps", type=int, default=100)
     parser.add_argument("--save-strategy", default="no", choices=["no", "epoch", "steps"])
     parser.add_argument("--save-total-limit", type=int, default=1)
@@ -352,6 +357,7 @@ def main() -> None:
         save_strategy=save_strategy,
         learning_rate=args.learning_rate,
         fp16=args.fp16,
+        gradient_checkpointing=args.gradient_checkpointing,
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
