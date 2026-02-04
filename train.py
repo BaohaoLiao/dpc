@@ -55,6 +55,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default="./byt5-base-akkadian")
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--prefix", default=DEFAULT_PREFIX)
+    parser.add_argument("--gen-max-length", type=int, default=None)
+    parser.add_argument("--gen-num-beams", type=int, default=1)
 
     parser.add_argument("--per-device-train-batch-size", type=int, default=2)
     parser.add_argument("--per-device-eval-batch-size", type=int, default=2)
@@ -359,6 +361,8 @@ def main() -> None:
         greater_is_better=greater_is_better,
         disable_tqdm=args.disable_tqdm,
         save_only_model=args.save_only_model,
+        generation_max_length=args.gen_max_length or args.max_length,
+        generation_num_beams=args.gen_num_beams,
     )
 
     trainer = Seq2SeqTrainer(
