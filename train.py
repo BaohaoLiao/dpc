@@ -374,6 +374,7 @@ def main() -> None:
         generation_num_beams=args.gen_num_beams,
         generation_min_length=args.gen_min_length,
         generation_max_new_tokens=args.gen_max_new_tokens,
+        ddp_find_unused_parameters=False,
     )
 
     trainer = Seq2SeqTrainer(
