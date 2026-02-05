@@ -196,14 +196,55 @@ def load_and_prepare_data(
     return dataset, None
 
 
+def sanitize_token_ids(token_ids, tokenizer, name: str, ignore_index: Optional[int] = None):
+    if isinstance(token_ids, torch.Tensor):
+        token_ids = token_ids.detach().cpu().numpy()
+    else:
+        token_ids = np.asarray(token_ids)
+
+    if token_ids.ndim == 3:
+        # Likely logits: convert to token ids.
+        token_ids = np.argmax(token_ids, axis=-1)
+
+    token_ids = token_ids.astype(np.int64, copy=False)
+
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    if ignore_index is not None:
+        if token_ids.ndim > 0:
+            token_ids = token_ids.copy()
+            token_ids[token_ids == ignore_index] = pad_id
+        elif token_ids == ignore_index:
+            token_ids = np.int64(pad_id)
+
+    vocab_size = getattr(tokenizer, "vocab_size", None)
+    if vocab_size is not None:
+        invalid = (token_ids < 0) | (token_ids >= vocab_size)
+        if invalid.any():
+            logging.warning(
+                "Found %d invalid %s token ids; replacing with pad_token_id=%s",
+                int(invalid.sum()),
+                name,
+                pad_id,
+            )
+            token_ids = token_ids.copy()
+            token_ids[invalid] = pad_id
+    else:
+        token_ids = np.where(token_ids < 0, pad_id, token_ids)
+
+    return token_ids
+
+
 def build_compute_metrics(tokenizer):
+
     def compute_metrics(eval_preds):
         preds, labels = eval_preds
         if isinstance(preds, tuple):
             preds = preds[0]
 
+        preds = sanitize_token_ids(preds, tokenizer, "prediction")
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-        labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+
+        labels = sanitize_token_ids(labels, tokenizer, "label", ignore_index=-100)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
 
         hypotheses = [pred.strip() for pred in decoded_preds]
@@ -239,8 +280,10 @@ class SaveEvalPredictionsCallback(TrainerCallback):
         if isinstance(preds, tuple):
             preds = preds[0]
 
+        preds = sanitize_token_ids(preds, self.tokenizer, "prediction")
         decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
-        labels = np.where(labels != -100, labels, self.tokenizer.pad_token_id)
+
+        labels = sanitize_token_ids(labels, self.tokenizer, "label", ignore_index=-100)
         decoded_labels = self.tokenizer.batch_decode(labels, skip_special_tokens=True)
 
         epoch = state.epoch if state.epoch is not None else 0
