@@ -369,7 +369,7 @@ def main() -> None:
         save_only_model=args.save_only_model,
         generation_max_length=args.gen_max_length or args.max_length,
         generation_num_beams=args.gen_num_beams,
-        # ddp_find_unused_parameters=False,
+        ddp_find_unused_parameters=True,
     )
 
     trainer = Seq2SeqTrainer(
