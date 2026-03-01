@@ -3292,13 +3292,13 @@ def run_training():
         comp2["oare_id"] = comp2["oare_id"].astype(str)
         comp2["is_extra"] = False
         if "pair_id" not in comp2.columns:
-            comp2["pair_id"] = comp2["oare_id"].astype(str).map(lambda x: f\"{x}::full\")
+            comp2["pair_id"] = comp2["oare_id"].astype(str).map(lambda x: f"{x}::full")
 
         extra2 = extra_clean.copy()
         extra2["oare_id"] = extra2["oare_id"].astype(str)
         extra2["is_extra"] = True
         if "pair_id" not in extra2.columns:
-            extra2["pair_id"] = extra2["oare_id"].astype(str).map(lambda x: f\"{x}::full\")
+            extra2["pair_id"] = extra2["oare_id"].astype(str).map(lambda x: f"{x}::full")
 
         all_clean = pd.concat([comp2, extra2], ignore_index=True)
 
