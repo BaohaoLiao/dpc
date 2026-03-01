@@ -2408,6 +2408,23 @@ def make_map_gloss_raw(Config, tokenizer, pre, glosser, *, seed_for_variant, tgt
     return _fn
 
 
+def _align_features_for_concat(base_ds, other_ds):
+    """
+    Align shared column feature types so `concatenate_datasets` does not fail
+    on string vs large_string mismatches.
+    """
+    if other_ds is None:
+        return None
+    out = other_ds
+    for col in base_ds.column_names:
+        if col in out.column_names:
+            base_feat = base_ds.features[col]
+            other_feat = out.features[col]
+            if base_feat != other_feat:
+                out = out.cast_column(col, base_feat)
+    return out
+
+
 class EpochVariantMinViewMix3(torch.utils.data.Dataset):
     def __init__(self, raws, pns, glosses, *, shared_epoch, seed=42, p_pn=0.5, p_gloss=0.5, mix_seed=None):
         self.raws = list(raws)
@@ -2488,6 +2505,7 @@ def build_probe_then_pngloss_variants(
             seed=int(probe_seed + 1009 * v), cat_weights=cat_w,
             attempt_mult=attempt_mult, enforce_unique=True,
         )
+        ds_probe = _align_features_for_concat(ds_base, ds_probe)
         ds_text = concatenate_datasets([ds_base, ds_probe]) if ds_probe is not None else ds_base
 
         ds_raw = ds_text.map(
@@ -2522,6 +2540,7 @@ def build_probe_then_pngloss_variants(
         seed=int(probe_seed + 555), cat_weights=cat_w,
         attempt_mult=attempt_mult, enforce_unique=True,
     )
+    ds_probe_va = _align_features_for_concat(val_text_ds, ds_probe_va)
     val_text_plus = concatenate_datasets([val_text_ds, ds_probe_va]) if ds_probe_va is not None else val_text_ds
 
     tokenized_val = val_text_plus.map(
