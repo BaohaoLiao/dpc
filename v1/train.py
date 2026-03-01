@@ -2475,6 +2475,7 @@ class EpochVariantMinViewMix3(torch.utils.data.Dataset):
 # Main builder: K train variants + val
 def build_probe_then_pngloss_variants(
     *, Config, train_text_ds, val_text_ds, tokenizer, pre, canon, glosser, NPROC=8, MAP_BS=1024,
+    use_pn_view=True, use_gloss_view=True,
 ):
     K = int(getattr(Config, "K_TRAIN_VARIANTS", 4))
     p_probe_tr = float(getattr(Config, "PROBE_APPEND_P", 0.0))
@@ -2513,16 +2514,22 @@ def build_probe_then_pngloss_variants(
             batched=True, batch_size=int(MAP_BS), num_proc=int(NPROC),
             remove_columns=[c for c in ds_text.column_names if c not in ()],
         )
-        ds_pn = ds_text.map(
-            make_map_pn(Config, tokenizer, pre, canon, tgt_max=int(tgt_max)),
-            batched=True, batch_size=int(MAP_BS), num_proc=int(NPROC),
-            remove_columns=[c for c in ds_text.column_names if c not in ()],
-        )
-        ds_gl = ds_text.map(
-            make_map_gloss_raw(Config, tokenizer, pre, glosser, seed_for_variant=int(gloss_seed + 7919 * v), tgt_max=int(tgt_max)),
-            with_indices=True, batched=True, batch_size=int(MAP_BS), num_proc=int(NPROC),
-            remove_columns=[c for c in ds_text.column_names if c not in ()],
-        )
+        if bool(use_pn_view):
+            ds_pn = ds_text.map(
+                make_map_pn(Config, tokenizer, pre, canon, tgt_max=int(tgt_max)),
+                batched=True, batch_size=int(MAP_BS), num_proc=int(NPROC),
+                remove_columns=[c for c in ds_text.column_names if c not in ()],
+            )
+        else:
+            ds_pn = ds_raw
+        if bool(use_gloss_view):
+            ds_gl = ds_text.map(
+                make_map_gloss_raw(Config, tokenizer, pre, glosser, seed_for_variant=int(gloss_seed + 7919 * v), tgt_max=int(tgt_max)),
+                with_indices=True, batched=True, batch_size=int(MAP_BS), num_proc=int(NPROC),
+                remove_columns=[c for c in ds_text.column_names if c not in ()],
+            )
+        else:
+            ds_gl = ds_raw
 
         raws.append(ds_raw)
         pns.append(ds_pn)
@@ -3455,9 +3462,11 @@ def run_training():
 
     train_texts = pre.preprocess_batch(list(train_for_tokenize["transliteration"]))
 
+    pn_enabled = False
     if os.path.exists(LEXICON_PATH) and os.path.exists(ONOMASTICON_PATH):
         try:
             canon = SourceCanonicalizer.from_csvs(LEXICON_PATH, ONOMASTICON_PATH, use_norm=True)
+            pn_enabled = True
         except Exception as e:
             print(f"[WARN] Failed to load canonicalizer, using identity fallback: {e}", flush=True)
             canon = _IdentityCanonicalizer()
@@ -3465,6 +3474,7 @@ def run_training():
         print("[WARN] Missing lexicon/onomasticon; PN canonicalization disabled.", flush=True)
         canon = _IdentityCanonicalizer()
 
+    gloss_enabled = False
     if os.path.exists(LEXICON_PATH) and os.path.exists(EBL_DICT_PATH):
         try:
             glosser = GlossAugmenter(
@@ -3476,6 +3486,7 @@ def run_training():
                 df1_penalty=0.65,
                 base_weight=0.6,
             )
+            gloss_enabled = True
         except Exception as e:
             print(f"[WARN] Failed to load glossary augmenter, using noop fallback: {e}", flush=True)
             glosser = _NoopGlossAugmenter()
@@ -3486,6 +3497,7 @@ def run_training():
     tokenized_train, tokenized_val, shared_epoch = build_probe_then_pngloss_variants(
         Config=Config, train_text_ds=train_for_tokenize, val_text_ds=val_for_tokenize,
         tokenizer=tokenizer, pre=pre, canon=canon, glosser=glosser, NPROC=NPROC, MAP_BS=MAP_BS,
+        use_pn_view=pn_enabled, use_gloss_view=gloss_enabled,
     )
 
     tbm_pairs_df = train_split_df[["transliteration","translation"]].copy()
