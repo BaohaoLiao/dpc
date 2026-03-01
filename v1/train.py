@@ -286,7 +286,22 @@ class Config:
     MSA_FUZZY_THR = 0.5         # char-bigram similarity threshold for NW partial credit
     MSA_MAX_INSERT_LEN = 3      # ignore insertion runs longer than this (likely garbage)
 
-os.makedirs(Config.HF_CACHE_DIR, exist_ok=True)
+def _ensure_writable_hf_cache_dir(path: str) -> str:
+    p = str(path)
+    try:
+        os.makedirs(p, exist_ok=True)
+        return p
+    except PermissionError:
+        fallback = os.path.join(os.getcwd(), ".cache", "hf-cache")
+        os.makedirs(fallback, exist_ok=True)
+        print(
+            f"[CONFIG] HF_CACHE_DIR is not writable: {p}. Using fallback: {fallback}",
+            flush=True,
+        )
+        return fallback
+
+
+Config.HF_CACHE_DIR = _ensure_writable_hf_cache_dir(getattr(Config, "HF_CACHE_DIR", ".cache/hf-cache"))
 
 # -------------------------
 # Repro
