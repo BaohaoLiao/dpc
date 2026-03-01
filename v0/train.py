@@ -24,6 +24,7 @@ import pandas as pd
 import torch
 import sacrebleu
 from datasets import Dataset
+from sklearn.model_selection import GroupShuffleSplit
 from transformers import (
     AutoModelForSeq2SeqLM,
     AutoTokenizer,
@@ -43,12 +44,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-csv", required=True, help="Path to training CSV")
     parser.add_argument(
         "--transliteration-col",
-        default="transliteration_frac",
+        default="transliteration",
         help="Column name for source text",
     )
     parser.add_argument(
         "--translation-col",
-        default="translation_frac",
+        default="translation",
         help="Column name for target text",
     )
     parser.add_argument("--model-name", default="google/byt5-base")
@@ -112,27 +113,6 @@ def seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def simple_sentence_aligner(
-    df: pd.DataFrame, src_col: str, tgt_col: str
-) -> pd.DataFrame:
-    aligned_data = []
-    for _, row in df.iterrows():
-        src = str(row[src_col])
-        tgt = str(row[tgt_col])
-
-        tgt_sents = [t.strip() for t in re.split(r"(?<=[.!?])\s+", tgt) if t.strip()]
-        src_lines = [s.strip() for s in src.split("\n") if s.strip()]
-
-        if len(tgt_sents) > 1 and len(tgt_sents) == len(src_lines):
-            for s, t in zip(src_lines, tgt_sents):
-                if len(s) > 3 and len(t) > 3:
-                    aligned_data.append({"transliteration": s, "translation": t})
-        else:
-            aligned_data.append({"transliteration": src, "translation": tgt})
-
-    return pd.DataFrame(aligned_data)
-
-
 def preprocess_function(
     examples,
     tokenizer,
@@ -185,10 +165,57 @@ def load_and_prepare_data(
             f"Missing columns: expected '{src_col}' and '{tgt_col}' in {train_csv}"
         )
 
-    train_expanded = simple_sentence_aligner(train_df, src_col, tgt_col)
+    group_col = "oare_id"
+    has_group_col = group_col in train_df.columns
+    keep_cols = [group_col] if has_group_col else []
+
+    if eval_split and eval_split > 0 and has_group_col:
+        gss = GroupShuffleSplit(
+            n_splits=1,
+            test_size=eval_split,
+            random_state=seed,
+        )
+        tr_idx, va_idx = next(gss.split(train_df, groups=train_df[group_col].astype(str)))
+        train_raw = train_df.iloc[tr_idx].reset_index(drop=True)
+        eval_raw = train_df.iloc[va_idx].reset_index(drop=True)
+
+        tr_ids = set(train_raw[group_col].astype(str).tolist())
+        va_ids = set(eval_raw[group_col].astype(str).tolist())
+        overlap = tr_ids & va_ids
+        if overlap:
+            raise ValueError(
+                f"Split leakage detected: {len(overlap)} {group_col} values appear in both train and eval."
+            )
+
+        train_expanded = train_raw
+        eval_expanded = eval_raw
+        logging.info(
+            "Group split by %s -> train rows=%s eval rows=%s",
+            group_col,
+            len(train_raw),
+            len(eval_raw),
+        )
+        logging.info(
+            "Expanded split data -> train rows=%s eval rows=%s",
+            len(train_expanded),
+            len(eval_expanded),
+        )
+        return (
+            Dataset.from_pandas(train_expanded, preserve_index=False),
+            Dataset.from_pandas(eval_expanded, preserve_index=False),
+        )
+
+    if eval_split and eval_split > 0 and not has_group_col:
+        logging.warning(
+            "Column '%s' not found in %s; using row-level random split.",
+            group_col,
+            train_csv,
+        )
+
+    train_expanded = train_df
     logging.info("Expanded train data: %s rows", len(train_expanded))
 
-    dataset = Dataset.from_pandas(train_expanded)
+    dataset = Dataset.from_pandas(train_expanded, preserve_index=False)
     if eval_split and eval_split > 0:
         split = dataset.train_test_split(test_size=eval_split, seed=seed)
         return split["train"], split["test"]

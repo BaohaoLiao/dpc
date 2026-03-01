@@ -3508,6 +3508,7 @@ def run_training():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    model = AutoModelForSeq2SeqLM.from_pretrained(Config.MODEL_NAME)
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
     sanitize_generation_config_for_saving(model, default_num_beams=int(getattr(Config, "NUM_BEAMS", 8)), default_len_pen=float(getattr(Config, "GEN_LENGTH_PENALTY", 1.0)))
 
