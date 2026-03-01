@@ -3426,9 +3426,43 @@ def run_training():
     ONOMASTICON_PATH = str(getattr(Config, "ONOMASTICON_PATH", ""))
     EBL_DICT_PATH    = str(getattr(Config, "EBL_DICT_PATH", ""))
 
-    canon = SourceCanonicalizer.from_csvs(LEXICON_PATH, ONOMASTICON_PATH, use_norm=True)
+    class _IdentityCanonicalizer:
+        def canonicalize_source(self, text: str, mode: str = "pn_norm") -> str:
+            return text if isinstance(text, str) else ""
+
+    class _NoopGlossAugmenter:
+        def append_gloss(self, src_text: str, **kwargs) -> str:
+            return src_text if isinstance(src_text, str) else ""
+
     train_texts = pre.preprocess_batch(list(train_for_tokenize["transliteration"]))
-    glosser = GlossAugmenter(LEXICON_PATH, EBL_DICT_PATH, train_texts=train_texts, idf_cap=3.5, rare_df_floor=3, df1_penalty=0.65, base_weight=0.6)
+
+    if os.path.exists(LEXICON_PATH) and os.path.exists(ONOMASTICON_PATH):
+        try:
+            canon = SourceCanonicalizer.from_csvs(LEXICON_PATH, ONOMASTICON_PATH, use_norm=True)
+        except Exception as e:
+            print(f"[WARN] Failed to load canonicalizer, using identity fallback: {e}", flush=True)
+            canon = _IdentityCanonicalizer()
+    else:
+        print("[WARN] Missing lexicon/onomasticon; PN canonicalization disabled.", flush=True)
+        canon = _IdentityCanonicalizer()
+
+    if os.path.exists(LEXICON_PATH) and os.path.exists(EBL_DICT_PATH):
+        try:
+            glosser = GlossAugmenter(
+                LEXICON_PATH,
+                EBL_DICT_PATH,
+                train_texts=train_texts,
+                idf_cap=3.5,
+                rare_df_floor=3,
+                df1_penalty=0.65,
+                base_weight=0.6,
+            )
+        except Exception as e:
+            print(f"[WARN] Failed to load glossary augmenter, using noop fallback: {e}", flush=True)
+            glosser = _NoopGlossAugmenter()
+    else:
+        print("[WARN] Missing lexicon/dictionary; glossary augmentation disabled.", flush=True)
+        glosser = _NoopGlossAugmenter()
 
     tokenized_train, tokenized_val, shared_epoch = build_probe_then_pngloss_variants(
         Config=Config, train_text_ds=train_for_tokenize, val_text_ds=val_for_tokenize,
