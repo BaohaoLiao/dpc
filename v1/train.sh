@@ -4,9 +4,9 @@ cd /data/${KRYLOV_NAMESPACE}/data/baliao/dpc/dpc/v1
 
 set -euo pipefail
 
-EP=10
-BS=4
-LR=2e-4
+EP="${EP:-10}"
+BS="${BS:-4}"
+LR="${LR:-2e-4}"
 
 # Defaults (override via env vars)
 TRAIN_SENTENCE_CSV="${TRAIN_SENTENCE_CSV:-data/final_train_sentence.csv}"

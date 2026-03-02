@@ -20,7 +20,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="CLI Configuration")
     parser.add_argument("script", type=str, help="Which script to run")
     parser.add_argument("--ems_project", type=str, default="mnist-baliao")
-    parser.add_argument("--exp_name", type=str, default="test")
+    parser.add_argument("--exp_name", type=str, default="train")
     parser.add_argument("--cluster", type=str, default="tess137")
     parser.add_argument("--namespace", type=str, default="chatgpt-training-slc-a100")
     parser.add_argument("--image", type=str, default="hub.tess.io/baliao/dpc:base")
@@ -113,18 +113,19 @@ def train():
     script_path = os.path.join(ROOT_DIR, context['script'])
     os.chmod(script_path, 755)
 
-    script_args = []
     train_bs = context.get("train_bs")
     train_lr = context.get("train_lr")
     train_epoch = context.get("train_epoch")
-    if train_bs not in (None, ""):
-        script_args.extend(["--batch-size", str(train_bs)])
-    if train_lr not in (None, ""):
-        script_args.extend(["--learning-rate", str(train_lr)])
-    if train_epoch not in (None, ""):
-        script_args.extend(["--epochs", str(train_epoch)])
 
-    output = subprocess.run([script_path, *script_args], check=True)
+    run_env = os.environ.copy()
+    if train_bs not in (None, ""):
+        run_env["BS"] = str(train_bs)
+    if train_lr not in (None, ""):
+        run_env["LR"] = str(train_lr)
+    if train_epoch not in (None, ""):
+        run_env["EP"] = str(train_epoch)
+
+    output = subprocess.run([script_path], check=True, env=run_env)
 
     if output.returncode != 0:
         raise ValueError(f"Script exited with error {output.returncode}")
