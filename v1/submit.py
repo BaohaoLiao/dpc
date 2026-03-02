@@ -104,6 +104,9 @@ def init_krylov_context():
             'gpu_per_node': int(context['gpu_per_node']),
             'num_nodes': int(context['num_nodes']),
             'script': context['script'],
+            'train_lr': context.get('train_lr'),
+            'train_bs': context.get('train_bs'),
+            'train_epoch': context.get('train_epoch'),
         }
 
 
