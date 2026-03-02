@@ -3601,16 +3601,16 @@ def run_training():
     trainer.save_model(Config.OUTPUT_DIR)
     tokenizer.save_pretrained(Config.OUTPUT_DIR)
 
-    CKPT_AVG_K = int(getattr(Config, "CKPT_AVG_K", 5))
-    AVG_DIR = os.path.join(Config.OUTPUT_DIR, f"ckpt_avg_best{CKPT_AVG_K}")
+    # CKPT_AVG_K = int(getattr(Config, "CKPT_AVG_K", 5))
+    # AVG_DIR = os.path.join(Config.OUTPUT_DIR, f"ckpt_avg_best{CKPT_AVG_K}")
 
-    avg_dir, chosen = average_checkpoints_and_save(
-        output_dir=Config.OUTPUT_DIR, save_dir=AVG_DIR,
-        k=CKPT_AVG_K, metric_key="eval_geo_mean", prefer_best=True,
-        base_ckpt_for_config=trainer.state.best_model_checkpoint,
-    )
-    tokenizer.save_pretrained(avg_dir)
-    print(f"Saved AVERAGED model to: {avg_dir}")
+    # avg_dir, chosen = average_checkpoints_and_save(
+    #     output_dir=Config.OUTPUT_DIR, save_dir=AVG_DIR,
+    #     k=CKPT_AVG_K, metric_key="eval_geo_mean", prefer_best=True,
+    #     base_ckpt_for_config=trainer.state.best_model_checkpoint,
+    # )
+    # tokenizer.save_pretrained(avg_dir)
+    # print(f"Saved AVERAGED model to: {avg_dir}")
 
 
 
