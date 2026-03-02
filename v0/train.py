@@ -65,6 +65,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--label-smoothing-factor", type=float, default=0.0)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--warmup-steps", type=int, default=0)
     parser.add_argument("--warmup-ratio", type=float, default=0.0)
@@ -94,7 +95,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Save and load the best model at end using the eval metric.",
     )
-    parser.add_argument("--metric-for-best-model", default="dpc_metric")
+    parser.add_argument("--metric-for-best-model", default="geo_mean")
     parser.add_argument("--greater-is-better", action="store_true", default=True)
     parser.add_argument("--resume-from-checkpoint", default=None)
     return parser
@@ -283,7 +284,7 @@ def build_compute_metrics(tokenizer):
         return {
             "bleu": bleu.score,
             "chrf": chrf.score,
-            "dpc_metric": geom_mean,
+            "geo_mean": geom_mean,
         }
 
     return compute_metrics
@@ -423,6 +424,7 @@ def main() -> None:
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         weight_decay=args.weight_decay,
+        label_smoothing_factor=args.label_smoothing_factor,
         max_grad_norm=args.max_grad_norm,
         warmup_steps=args.warmup_steps,
         warmup_ratio=args.warmup_ratio,
