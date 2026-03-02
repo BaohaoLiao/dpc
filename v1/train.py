@@ -3540,7 +3540,7 @@ def run_training():
         optim="adamw_torch_fused", label_smoothing_factor=Config.LABEL_SMOOTHING,
         predict_with_generate=False,
         dataloader_num_workers=16, dataloader_pin_memory=True, dataloader_persistent_workers=True,
-        logging_strategy="steps", logging_steps=100, report_to=str(getattr(Config, "REPORT_TO", "none")),
+        logging_strategy="steps", logging_steps=10, report_to=str(getattr(Config, "REPORT_TO", "none")),
     )
 
     gen_cfg = model.generation_config
