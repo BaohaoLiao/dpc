@@ -649,7 +649,18 @@ _SUBSCRIPT_TRANS = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 _H_HAT_TRANS = str.maketrans("ḫḪ", "hH")
 
 
-def _key(s: str) -> str:
+def _key(s: Any) -> str:
+    if s is None:
+        return ""
+    if isinstance(s, float):
+        try:
+            if math.isnan(s):
+                return ""
+        except Exception:
+            pass
+    s = s if isinstance(s, str) else str(s)
+    if s.lower() == "nan":
+        return ""
     return s.translate(_SUBSCRIPT_TRANS).translate(_H_HAT_TRANS).strip()
 
 
