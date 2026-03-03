@@ -127,6 +127,7 @@ class Config:
 
     BATCH_SIZE = 1
     GRAD_ACCUM = 4
+    GRADIENT_CHECKPOINTING = False
     EPOCHS = 5
     VAL_SIZE = 0.1
     NUM_FOLDS = 0   # if >1, use fold split by oare_id instead of VAL_SIZE
@@ -2953,15 +2954,16 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
                 except Exception as e:
                     self.tbm_index = None
 
-        try:
-            self.model.config.use_cache = True
-        except Exception:
-            pass
-        try:
-            if getattr(self.model, "generation_config", None) is not None:
-                self.model.generation_config.use_cache = True
-        except Exception:
-            pass
+        if not bool(getattr(self.args, "gradient_checkpointing", False)):
+            try:
+                self.model.config.use_cache = True
+            except Exception:
+                pass
+            try:
+                if getattr(self.model, "generation_config", None) is not None:
+                    self.model.generation_config.use_cache = True
+            except Exception:
+                pass
 
     def _is_dist(self):
         return torch.distributed.is_available() and torch.distributed.is_initialized()
@@ -3520,6 +3522,16 @@ def run_training():
         torch.cuda.empty_cache()
 
     model = AutoModelForSeq2SeqLM.from_pretrained(Config.MODEL_NAME)
+    grad_ckpt = bool(getattr(Config, "GRADIENT_CHECKPOINTING", False))
+    if grad_ckpt:
+        try:
+            model.gradient_checkpointing_enable()
+        except Exception as e:
+            print(f"[WARN] Failed to enable gradient checkpointing: {e}", flush=True)
+        try:
+            model.config.use_cache = False
+        except Exception:
+            pass
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
     sanitize_generation_config_for_saving(model, default_num_beams=int(getattr(Config, "NUM_BEAMS", 8)), default_len_pen=float(getattr(Config, "GEN_LENGTH_PENALTY", 1.0)))
 
@@ -3533,6 +3545,7 @@ def run_training():
         bf16=use_bf16, fp16=False,
         per_device_train_batch_size=Config.BATCH_SIZE, per_device_eval_batch_size=32,
         gradient_accumulation_steps=getattr(Config, "GRAD_ACCUM", 1),
+        gradient_checkpointing=grad_ckpt,
         group_by_length=True, length_column_name="input_length",
         learning_rate=Config.LEARNING_RATE, weight_decay=0.01, max_grad_norm=1.0,
         num_train_epochs=Config.EPOCHS, lr_scheduler_type="cosine_with_restarts",
@@ -4348,6 +4361,19 @@ def _build_arg_parser():
     p.add_argument("--batch-size", type=int)
     p.add_argument("--grad-accum", type=int)
     p.add_argument("--learning-rate", type=float)
+    p.add_argument(
+        "--gradient-checkpointing",
+        dest="gradient_checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing.",
+    )
+    p.add_argument(
+        "--no-gradient-checkpointing",
+        dest="gradient_checkpointing",
+        action="store_false",
+        help="Disable gradient checkpointing.",
+    )
+    p.set_defaults(gradient_checkpointing=None)
     p.add_argument("--label-smoothing", type=float)
     p.add_argument("--warmup-ratio", type=float)
     p.add_argument("--val-size", type=float)
@@ -4411,6 +4437,8 @@ def main():
         overrides["GRAD_ACCUM"] = str(args.grad_accum)
     if args.learning_rate is not None:
         overrides["LEARNING_RATE"] = str(args.learning_rate)
+    if args.gradient_checkpointing is not None:
+        overrides["GRADIENT_CHECKPOINTING"] = str(args.gradient_checkpointing)
     if args.label_smoothing is not None:
         overrides["LABEL_SMOOTHING"] = str(args.label_smoothing)
     if args.warmup_ratio is not None:

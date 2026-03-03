@@ -25,6 +25,21 @@ torchrun --nproc_per_node=4 v1/train.py \
   --ebl-dict-path /path/to/eBL_Dictionary.csv
 ```
 
+## Grid Search (submit.py)
+
+From the `v1/` directory, submit a grid search job set with:
+```bash
+python submit.py train.sh
+```
+
+You can also set a custom grid:
+```bash
+python submit.py train.sh \
+  --grid-lr 2e-4 1e-4 5e-5 \
+  --grid-bs 2 4 8 \
+  --grid-epoch 5 10
+```
+
 ## Folded Split (10 parts by `oare_id`)
 
 Use `NUM_FOLDS`/`FOLD_INDEX` to train with one fold held out:
