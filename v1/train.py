@@ -254,6 +254,9 @@ class Config:
     BEST_METRIC_KEY = "eval_geo_mean"
     SAVE_EVAL_GENERATIONS = True
     EVAL_GENERATIONS_PREFIX = "eval_generations"
+    CKPT_AVG_CLEANUP = False
+    EVAL_AVG_CHECKPOINT = True
+    EVAL_AVG_METRIC_PREFIX = "eval_avg"
 
     # ============================================================
     # (MTM24) pretrain knobs
@@ -3013,7 +3016,13 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         return metrics
 
-    def _evaluate_mbr(self, metric_key_prefix="eval"):
+    def _evaluate_mbr(
+        self,
+        metric_key_prefix="eval",
+        *,
+        save_dir_override: Optional[str] = None,
+        file_tag_override: Optional[str] = None,
+    ):
         model = self.model
         tok = self.processing_class
         device = model.device
@@ -3152,7 +3161,9 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
                 prefix = str(getattr(Config, "EVAL_GENERATIONS_PREFIX", "eval_generations"))
                 step = int(getattr(self.state, "global_step", 0) or 0)
                 epoch = getattr(self.state, "epoch", None)
-                if epoch is None:
+                if file_tag_override is not None and str(file_tag_override).strip():
+                    tag = str(file_tag_override).strip()
+                elif epoch is None:
                     tag = f"step{step}"
                 else:
                     try:
@@ -3162,9 +3173,12 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
                         epoch_tag = f"epoch{epoch}"
                     tag = f"{epoch_tag}_step{step}"
 
-                out_dir = str(self.args.output_dir)
-                ckpt_dir = os.path.join(out_dir, f"checkpoint-{step}")
-                save_dir = ckpt_dir if os.path.isdir(ckpt_dir) else out_dir
+                if save_dir_override is not None and str(save_dir_override).strip():
+                    save_dir = str(save_dir_override)
+                else:
+                    out_dir = str(self.args.output_dir)
+                    ckpt_dir = os.path.join(out_dir, f"checkpoint-{step}")
+                    save_dir = ckpt_dir if os.path.isdir(ckpt_dir) else out_dir
                 os.makedirs(save_dir, exist_ok=True)
                 out_path = os.path.join(save_dir, f"{prefix}_{tag}.csv")
 
@@ -3656,16 +3670,53 @@ def run_training():
     trainer.save_model(Config.OUTPUT_DIR)
     tokenizer.save_pretrained(Config.OUTPUT_DIR)
 
-    # CKPT_AVG_K = int(getattr(Config, "CKPT_AVG_K", 5))
-    # AVG_DIR = os.path.join(Config.OUTPUT_DIR, f"ckpt_avg_best{CKPT_AVG_K}")
+    CKPT_AVG_K = int(getattr(Config, "CKPT_AVG_K", 5))
+    AVG_DIR = os.path.join(Config.OUTPUT_DIR, f"ckpt_avg_best{CKPT_AVG_K}")
+    do_avg_eval = bool(getattr(Config, "EVAL_AVG_CHECKPOINT", True))
 
-    # avg_dir, chosen = average_checkpoints_and_save(
-    #     output_dir=Config.OUTPUT_DIR, save_dir=AVG_DIR,
-    #     k=CKPT_AVG_K, metric_key="eval_geo_mean", prefer_best=True,
-    #     base_ckpt_for_config=trainer.state.best_model_checkpoint,
-    # )
-    # tokenizer.save_pretrained(avg_dir)
-    # print(f"Saved AVERAGED model to: {avg_dir}")
+    avg_dir = None
+    if trainer.is_world_process_zero():
+        avg_dir, chosen = average_checkpoints_and_save(
+            output_dir=Config.OUTPUT_DIR, save_dir=AVG_DIR,
+            k=CKPT_AVG_K, metric_key="eval_geo_mean", prefer_best=True,
+            base_ckpt_for_config=trainer.state.best_model_checkpoint,
+            cleanup_checkpoints=bool(getattr(Config, "CKPT_AVG_CLEANUP", False)),
+        )
+        tokenizer.save_pretrained(avg_dir)
+        print(f"Saved AVERAGED model to: {avg_dir}", flush=True)
+        print(f"[CKPT_AVG] chosen checkpoints: {chosen}", flush=True)
+
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+    if do_avg_eval and trainer.is_world_process_zero():
+        try:
+            if avg_dir is None:
+                avg_dir = AVG_DIR
+            print("[AVG_EVAL] Loading averaged checkpoint and running validation generation...", flush=True)
+            avg_sd = _load_state_dict_any(avg_dir, map_location="cpu")
+            missing, unexpected = trainer.model.load_state_dict(avg_sd, strict=False)
+            print(
+                f"[AVG_EVAL] state_dict loaded: missing={len(missing)} unexpected={len(unexpected)}",
+                flush=True,
+            )
+            trainer.model.eval()
+            avg_prefix = str(getattr(Config, "EVAL_AVG_METRIC_PREFIX", "eval_avg"))
+            avg_metrics = trainer._evaluate_mbr(
+                metric_key_prefix=avg_prefix,
+                save_dir_override=avg_dir,
+                file_tag_override="avg",
+            )
+            avg_metrics_path = os.path.join(avg_dir, f"{avg_prefix}_metrics.json")
+            with open(avg_metrics_path, "w", encoding="utf-8") as f:
+                json.dump(avg_metrics, f, indent=2)
+            print(f"[AVG_EVAL] metrics: {avg_metrics}", flush=True)
+            print(f"[AVG_EVAL] wrote {avg_metrics_path}", flush=True)
+        except Exception as e:
+            print(f"[AVG_EVAL] failed: {e}", flush=True)
+
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.barrier()
 
 
 
