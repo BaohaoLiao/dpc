@@ -3226,6 +3226,32 @@ def compute_warmup_steps(num_examples, per_device_bs, grad_accum, epochs, warmup
     return int(total_steps * warmup_ratio)
 
 
+def _as_path_list(x: Any) -> List[str]:
+    if x is None:
+        return []
+    if isinstance(x, (list, tuple, set)):
+        items = list(x)
+    else:
+        items = [x]
+    out: List[str] = []
+    for it in items:
+        s = "" if it is None else str(it).strip()
+        if not s:
+            continue
+        parts = re.split(r"[,\n]+", s)
+        for p in parts:
+            p = p.strip()
+            if p:
+                out.append(p)
+    seen = set()
+    uniq: List[str] = []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
 def split_group_folds(df: pd.DataFrame, group_col: str, num_folds: int, seed: int, fold_index: int):
     if num_folds <= 1:
         raise ValueError("num_folds must be > 1")
@@ -3282,22 +3308,38 @@ def run_training():
     NPROC  = int(getattr(Config, "NPROC", 16))
     MAP_BS = int(getattr(Config, "MAP_BATCH_SIZE", 2048))
 
-    train_sentence_csv = str(getattr(Config, "TRAIN_SENTENCE_CSV", "") or "")
-    use_sentence_csv = bool(train_sentence_csv and os.path.exists(train_sentence_csv))
+    train_sentence_csv_paths = _as_path_list(getattr(Config, "TRAIN_SENTENCE_CSV", ""))
+    train_sentence_csv_exists = [p for p in train_sentence_csv_paths if os.path.exists(p)]
+    train_sentence_csv_missing = [p for p in train_sentence_csv_paths if not os.path.exists(p)]
+    if train_sentence_csv_paths and not train_sentence_csv_exists:
+        raise FileNotFoundError(
+            f"TRAIN_SENTENCE_CSV provided but no files exist: {train_sentence_csv_paths}"
+        )
+    if train_sentence_csv_missing:
+        print(f"[WARN] TRAIN_SENTENCE_CSV missing files ignored: {train_sentence_csv_missing}", flush=True)
+    use_sentence_csv = bool(train_sentence_csv_exists)
 
     if use_sentence_csv:
-        base_df = pd.read_csv(train_sentence_csv)
         required = {"oare_id", "transliteration", "translation"}
-        missing = required - set(base_df.columns)
-        if missing:
-            raise ValueError(
-                f"TRAIN_SENTENCE_CSV missing columns: {sorted(missing)}"
-            )
-        base_df = base_df.copy()
-        base_df["oare_id"] = base_df["oare_id"].astype(str)
-        base_df["is_extra"] = False
-        if "pair_id" not in base_df.columns:
-            base_df["pair_id"] = base_df["oare_id"].map(lambda x: f"{x}::full")
+        frames = []
+        for p in train_sentence_csv_exists:
+            df = pd.read_csv(p)
+            missing = required - set(df.columns)
+            if missing:
+                raise ValueError(
+                    f"TRAIN_SENTENCE_CSV file '{p}' missing columns: {sorted(missing)}"
+                )
+            df = df.copy()
+            df["oare_id"] = df["oare_id"].astype(str)
+            df["is_extra"] = False
+            if "pair_id" not in df.columns:
+                df["pair_id"] = df["oare_id"].map(lambda x: f"{x}::full")
+            frames.append(df)
+        base_df = pd.concat(frames, ignore_index=True)
+        print(
+            f"[TRAIN_SENTENCE_CSV] files={len(train_sentence_csv_exists)} rows={len(base_df)}",
+            flush=True,
+        )
         all_clean = base_df
     else:
         comp_df = pd.read_csv(os.path.join(Config.INPUT_DIR, "train.csv")).assign(is_extra=False)
@@ -4349,7 +4391,11 @@ def _build_arg_parser():
     p.add_argument("--hf-cache-dir", help="Overrides Config.HF_CACHE_DIR")
     p.add_argument("--dpc-extra-dir", help="Overrides Config.DPC_EXTRA_DIR")
     p.add_argument("--manual-extra-dir", help="Overrides Config.MANUAL_EXTRA_DIR")
-    p.add_argument("--train-sentence-csv", help="Overrides Config.TRAIN_SENTENCE_CSV")
+    p.add_argument(
+        "--train-sentence-csv",
+        nargs="+",
+        help="Overrides Config.TRAIN_SENTENCE_CSV with one or more csv paths.",
+    )
     p.add_argument("--lexicon-path", help="Overrides Config.LEXICON_PATH")
     p.add_argument("--onomasticon-path", help="Overrides Config.ONOMASTICON_PATH")
     p.add_argument("--ebl-dict-path", help="Overrides Config.EBL_DICT_PATH")

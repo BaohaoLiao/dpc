@@ -25,6 +25,17 @@ torchrun --nproc_per_node=4 v1/train.py \
   --ebl-dict-path /path/to/eBL_Dictionary.csv
 ```
 
+Train with two sentence CSV files (merged before split by `oare_id`):
+```bash
+python v1/train.py \
+  --train-sentence-csv v1/data/final_train_sentence.csv v1/data/train_sentence_clean.csv \
+  --output-dir /path/to/output \
+  --model-name /path/to/base_or_checkpoint \
+  --lexicon-path /path/to/OA_Lexicon_eBL.csv \
+  --onomasticon-path /path/to/onomasticon.csv \
+  --ebl-dict-path /path/to/eBL_Dictionary.csv
+```
+
 ## Grid Search (submit.py)
 
 From the `v1/` directory, submit a grid search job set with:
