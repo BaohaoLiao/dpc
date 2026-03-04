@@ -139,6 +139,9 @@ class Config:
     MAP_BATCH_SIZE = 2048
     TORCH_COMPILE = False
     REPORT_TO = "none"  # set to "wandb" to enable Weights & Biases
+    EARLY_STOPPING_ENABLE = True
+    EARLY_STOPPING_PATIENCE = 3
+    EARLY_STOPPING_THRESHOLD = 1e-1
 
     # ============================================================
     # Data paths
@@ -2619,7 +2622,7 @@ def _choose_best_k_by_metric(output_dir, k, metric_key="eval_geo_mean"):
         return ckpts[-k:]
 
 def average_checkpoints_and_save(
-    output_dir, save_dir, *, k=8, metric_key="eval_geo_mean",
+    model, output_dir, save_dir, *, k=8, metric_key="eval_geo_mean",
     prefer_best=True, base_ckpt_for_config=None, cleanup_checkpoints=True,
 ):
     ckpts = _list_checkpoints(output_dir)
@@ -3619,11 +3622,20 @@ def run_training():
 
     eval_placeholder = tokenized_val.select(range(min(64, len(tokenized_val)))) if len(tokenized_val) else tokenized_val
 
+    callbacks = []
+    if bool(getattr(Config, "EARLY_STOPPING_ENABLE", True)):
+        callbacks.append(
+            EarlyStoppingCallback(
+                early_stopping_patience=int(getattr(Config, "EARLY_STOPPING_PATIENCE", 3)),
+                early_stopping_threshold=float(getattr(Config, "EARLY_STOPPING_THRESHOLD", 1e-1)),
+            )
+        )
+
     trainer = MBRGlossSeq2SeqTrainer(
         model=model, args=args,
         train_dataset=tokenized_train, eval_dataset=eval_placeholder,
         data_collator=data_collator, processing_class=tokenizer, compute_metrics=None,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=3, early_stopping_threshold=1e-1)],
+        callbacks=callbacks,
         val_text_ds=val_for_tokenize, pre=pre, prefix=Config.PREFIX,
         post=post_out, post_ref=None,
         glosser=glosser,
@@ -3677,7 +3689,7 @@ def run_training():
     avg_dir = None
     if trainer.is_world_process_zero():
         avg_dir, chosen = average_checkpoints_and_save(
-            output_dir=Config.OUTPUT_DIR, save_dir=AVG_DIR,
+            model=trainer.model, output_dir=Config.OUTPUT_DIR, save_dir=AVG_DIR,
             k=CKPT_AVG_K, metric_key="eval_geo_mean", prefer_best=True,
             base_ckpt_for_config=trainer.state.best_model_checkpoint,
             cleanup_checkpoints=bool(getattr(Config, "CKPT_AVG_CLEANUP", False)),
@@ -4471,6 +4483,19 @@ def _build_arg_parser():
         help="Disable gradient checkpointing.",
     )
     p.set_defaults(gradient_checkpointing=None)
+    p.add_argument(
+        "--early-stopping",
+        dest="early_stopping",
+        action="store_true",
+        help="Enable early stopping callback.",
+    )
+    p.add_argument(
+        "--no-early-stopping",
+        dest="early_stopping",
+        action="store_false",
+        help="Disable early stopping callback.",
+    )
+    p.set_defaults(early_stopping=None)
     p.add_argument("--label-smoothing", type=float)
     p.add_argument("--warmup-ratio", type=float)
     p.add_argument("--val-size", type=float)
@@ -4536,6 +4561,8 @@ def main():
         overrides["LEARNING_RATE"] = str(args.learning_rate)
     if args.gradient_checkpointing is not None:
         overrides["GRADIENT_CHECKPOINTING"] = str(args.gradient_checkpointing)
+    if args.early_stopping is not None:
+        overrides["EARLY_STOPPING_ENABLE"] = str(args.early_stopping)
     if args.label_smoothing is not None:
         overrides["LABEL_SMOOTHING"] = str(args.label_smoothing)
     if args.warmup_ratio is not None:
