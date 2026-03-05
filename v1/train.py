@@ -29,6 +29,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 # third-party
 # -------------------------
 import huggingface_hub
+import joblib
 import numpy as np
 import pandas as pd
 import sacrebleu
@@ -195,12 +196,14 @@ class Config:
     # ============================================================
     # K train variants
     # ============================================================
-    K_TRAIN_VARIANTS = 32
+    K_TRAIN_VARIANTS = int(EPOCHS * 1.5)
 
     # ============================================================
     # PNGLOSS (PN canonicalization + glossary append)
     # ============================================================
     USE_PNGLOSS = True
+    PN_ENABLE = True
+    PN_MODE = "pn_norm"
 
     GLOSS_MAX_ITEMS = 16
     GLOSS_MAX_APPEND_CHARS = 240
@@ -210,7 +213,7 @@ class Config:
     # PROBE (append-before-pngloss)
     # ============================================================
     USE_PROBE_APPEND = True
-    PROBE_APPEND_P = 0.15
+    PROBE_APPEND_P = 0.05
     VAL_PROBE_APPEND_P = 0.0
     PROBE_SEED = SEED + 3
 
@@ -244,14 +247,28 @@ class Config:
     MBR_GLOSS_VARIANTS = 1
 
     MBR_NUM_BEAMS = 4
-    MBR_NUM_BEAM_CANDS = 1
+    MBR_NUM_BEAM_CANDS = 2
 
-    MBR_NUM_SAMPLE_CANDS = 6
+    MBR_NUM_SAMPLE_CANDS = 8
     MBR_TEMPERATURE = 0.75
     MBR_TOP_P = 0.9
 
     MBR_BATCH_SIZE_INPUTS = 64
     MBR_POOL_CAP = 36
+
+    # optional kNN knobs (kept disabled by default)
+    KNN_ENABLE = False
+    KNN_TOPK = 8
+    KNN_HINT_K = 2
+    KNN_HINT_MAX_CHARS = 240
+    KNN_RET_K = 1
+    KNN_QUERY_BS = 128
+    KNN_MIN_SIM = 0.90
+    KNN_HARD_SIM = 0.94
+    KNN_PREFIX_FOR_ENCODE = PREFIX
+
+    # save auxiliary artifacts for inference notebook by default
+    SAVE_GLOSSER_AND_TBM = True
 
     CKPT_AVG_K = 5
     BEST_METRIC_KEY = "eval_geo_mean"
@@ -2902,14 +2919,27 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
         gloss_max_items=6, gloss_max_append_chars=240,
         mbr_batch_size_inputs=16,
         src_max_length=512, max_new_tokens=512,
-        num_beams=8, num_beam_cands=1, num_sample_cands=4,
+        num_beams=8, num_beam_cands=2, num_sample_cands=8,
         length_penalty=1.3, temperature=0.7, top_p=0.9,
         repetition_penalty=1.0, no_repeat_ngram_size=0,
         mbr_pool_cap=10, show_progress=True,
+        canon=None, pn_enable=False, pn_mode="pn_norm",
         tbm_index=None, tbm_pairs=None,
         tbm_ngram=(3,6), tbm_max_features=250_000,
         tbm_topk=3, tbm_min_sim=0.92, tbm_hard_sim=0.97,
         tbm_enable=True,
+        knn_mem=None,
+        knn_nn=None,
+        knn_tgts=None,
+        knn_enable: bool = False,
+        knn_topk: int = 8,
+        knn_hint_k: int = 2,
+        knn_hint_max_chars: int = 240,
+        knn_ret_k: int = 1,
+        knn_prefix_for_encode: str | None = None,
+        knn_query_bs: int | None = None,
+        knn_min_sim: float = 0.90,
+        knn_hard_sim: float = 0.94,
         **kwargs
     ):
         super().__init__(*args, **kwargs)
@@ -2928,6 +2958,9 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
         self.gloss_seed = int(gloss_seed)
         self.gloss_max_items = int(gloss_max_items)
         self.gloss_max_append_chars = int(gloss_max_append_chars)
+        self.canon = canon
+        self.pn_enable = bool(pn_enable)
+        self.pn_mode = str(pn_mode)
         self.mbr_batch_size_inputs = int(mbr_batch_size_inputs)
         self.src_max_length = int(src_max_length)
         self.max_new_tokens = int(max_new_tokens)
@@ -2947,6 +2980,21 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
         self.tbm_min_sim = float(tbm_min_sim)
         self.tbm_hard_sim = float(tbm_hard_sim)
 
+        # kNN knobs are accepted for compatibility with notebook wiring.
+        # This trainer currently does not build/query a kNN memory bank internally.
+        self.knn_enable = bool(knn_enable)
+        self.knn_topk = int(knn_topk)
+        self.knn_hint_k = int(knn_hint_k)
+        self.knn_hint_max_chars = int(knn_hint_max_chars)
+        self.knn_ret_k = int(knn_ret_k)
+        self.knn_min_sim = float(knn_min_sim)
+        self.knn_hard_sim = float(knn_hard_sim)
+        self.knn_prefix_for_encode = str(self.prefix if knn_prefix_for_encode is None else knn_prefix_for_encode)
+        self.knn_query_bs = int(128 if knn_query_bs is None else knn_query_bs)
+        self.knn_nn = knn_nn
+        self.knn_tgts = knn_tgts
+        self.knn_mem = knn_mem
+
         self.tbm_index = None
         if self.tbm_enable:
             if tbm_index is not None:
@@ -2959,6 +3007,10 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
                     )
                 except Exception as e:
                     self.tbm_index = None
+
+        if self.knn_enable and (self.knn_mem is None and (self.knn_nn is None or self.knn_tgts is None)):
+            if self.show_progress:
+                print("[kNN] knn_enable=True but no knn memory provided; kNN remains inactive.", flush=True)
 
         if not bool(getattr(self.args, "gradient_checkpointing", False)):
             try:
@@ -3039,6 +3091,15 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
             base = str(s)
             flat_inputs.append(self.prefix + base)
             flat_exi.append(ex_i)
+            if self.pn_enable and (self.canon is not None):
+                try:
+                    s_pn = self.canon.canonicalize_source(base, mode=self.pn_mode)
+                except Exception:
+                    s_pn = base
+                s_pn = "" if s_pn is None else str(s_pn)
+                if s_pn and s_pn != base:
+                    flat_inputs.append(self.prefix + s_pn)
+                    flat_exi.append(ex_i)
             if (self.glosser is not None) and (self.gloss_variants > 0):
                 ex_int = _stable_int_id(eid)
                 for v in range(self.gloss_variants):
@@ -3489,8 +3550,27 @@ def run_training():
 
         print(f"[SENT] train_added={len(sent_train_df)} | val_added={len(sent_val_df)}", flush=True)
 
-    train_for_tokenize = drop_duplicates_hf(train_for_tokenize, src_col="transliteration", tgt_col="translation", rule="tgt", keep="longest_src", normalize=True, report=True)
-    val_for_tokenize = drop_duplicates_hf(val_for_tokenize, src_col="transliteration", tgt_col="translation", rule="tgt", keep="longest_src", normalize=True, report=True)
+    dedupe_rule = str(getattr(Config, "DEDUPE_RULE", "tgt"))
+    dedupe_keep = str(getattr(Config, "DEDUPE_KEEP", "longest_src"))
+    dedupe_norm = bool(getattr(Config, "DEDUPE_NORMALIZE", True))
+    train_for_tokenize = drop_duplicates_hf(
+        train_for_tokenize,
+        src_col="transliteration",
+        tgt_col="translation",
+        rule=dedupe_rule,
+        keep=dedupe_keep,
+        normalize=dedupe_norm,
+        report=True,
+    )
+    val_for_tokenize = drop_duplicates_hf(
+        val_for_tokenize,
+        src_col="transliteration",
+        tgt_col="translation",
+        rule=dedupe_rule,
+        keep=dedupe_keep,
+        normalize=dedupe_norm,
+        report=True,
+    )
 
     train_for_tokenize = filter_incomplete_hf(train_for_tokenize, ratio_max=0.6, keep=False, batch_size=2048, num_proc=1)
     val_for_tokenize   = filter_incomplete_hf(val_for_tokenize,   ratio_max=0.6, keep=False, batch_size=2048, num_proc=1)
@@ -3573,6 +3653,23 @@ def run_training():
     )
 
     tbm_pairs_df = train_split_df[["transliteration","translation"]].copy()
+    if bool(getattr(Config, "SAVE_GLOSSER_AND_TBM", True)):
+        os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+        if gloss_enabled:
+            try:
+                glosser_path = os.path.join(Config.OUTPUT_DIR, "glosser.joblib")
+                joblib.dump(glosser, glosser_path)
+                print(f"[ARTIFACT] wrote {glosser_path}", flush=True)
+            except Exception as e:
+                print(f"[WARN] Failed to save glosser.joblib: {e}", flush=True)
+        else:
+            print("[ARTIFACT] gloss disabled; skipping glosser.joblib", flush=True)
+        try:
+            tbm_pairs_path = os.path.join(Config.OUTPUT_DIR, "tbm_pairs.csv")
+            tbm_pairs_df.to_csv(tbm_pairs_path, index=False)
+            print(f"[ARTIFACT] wrote {tbm_pairs_path}", flush=True)
+        except Exception as e:
+            print(f"[WARN] Failed to save tbm_pairs.csv: {e}", flush=True)
 
     warmup_steps = compute_warmup_steps(len(tokenized_train), Config.BATCH_SIZE, getattr(Config, "GRAD_ACCUM", 1), Config.EPOCHS, getattr(Config, "WARMUP_RATIO", 0.05))
 
@@ -3647,13 +3744,16 @@ def run_training():
         src_max_length=Config.SRC_MAX_LENGTH, max_new_tokens=Config.GEN_MAX_NEW_TOKENS,
         num_beams=int(getattr(Config, "MBR_NUM_BEAMS", int(getattr(Config, "NUM_BEAMS", 8)))),
         num_beam_cands=int(getattr(Config, "MBR_NUM_BEAM_CANDS", 2)),
-        num_sample_cands=int(getattr(Config, "MBR_NUM_SAMPLE_CANDS", 4)),
+        num_sample_cands=int(getattr(Config, "MBR_NUM_SAMPLE_CANDS", 8)),
         mbr_pool_cap=int(getattr(Config, "MBR_POOL_CAP", 32)),
         length_penalty=float(getattr(Config, "GEN_LENGTH_PENALTY", 1.3)),
         temperature=float(getattr(Config, "MBR_TEMPERATURE", 0.7)),
         top_p=float(getattr(Config, "MBR_TOP_P", 0.9)),
         repetition_penalty=float(getattr(Config, "GEN_REPETITION_PENALTY", 1.0)),
         no_repeat_ngram_size=int(getattr(Config, "GEN_NO_REPEAT_NGRAM", 0)) or 0,
+        canon=canon,
+        pn_enable=bool(getattr(Config, "PN_ENABLE", pn_enabled)),
+        pn_mode=str(getattr(Config, "PN_MODE", "pn_norm")),
         tbm_pairs=tbm_pairs_df,
         tbm_enable=bool(getattr(Config, "TBM_ENABLE", True)),
         tbm_topk=int(getattr(Config, "TBM_TOPK", 3)),
@@ -3661,6 +3761,15 @@ def run_training():
         tbm_hard_sim=float(getattr(Config, "TBM_HARD_SIM", 0.97)),
         tbm_ngram=(int(getattr(Config, "TBM_NGRAM_MIN", 3)), int(getattr(Config, "TBM_NGRAM_MAX", 6))),
         tbm_max_features=int(getattr(Config, "TBM_MAX_FEATURES", 250_000)),
+        knn_enable=bool(getattr(Config, "KNN_ENABLE", False)),
+        knn_topk=int(getattr(Config, "KNN_TOPK", 8)),
+        knn_hint_k=int(getattr(Config, "KNN_HINT_K", 2)),
+        knn_hint_max_chars=int(getattr(Config, "KNN_HINT_MAX_CHARS", 240)),
+        knn_ret_k=int(getattr(Config, "KNN_RET_K", 1)),
+        knn_prefix_for_encode=str(getattr(Config, "KNN_PREFIX_FOR_ENCODE", Config.PREFIX)),
+        knn_query_bs=int(getattr(Config, "KNN_QUERY_BS", 128)),
+        knn_min_sim=float(getattr(Config, "KNN_MIN_SIM", 0.90)),
+        knn_hard_sim=float(getattr(Config, "KNN_HARD_SIM", 0.94)),
     )
 
     class _SetSharedEpochCallback(TrainerCallback):

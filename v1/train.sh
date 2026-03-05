@@ -7,11 +7,12 @@ set -euo pipefail
 EP="${EP:-10}"
 BS="${BS:-4}"
 LR="${LR:-2e-4}"
+ACCUM=2
 
 # Defaults (override via env vars)
-TRAIN_SENTENCE_CSV="${TRAIN_SENTENCE_CSV:-data/final_train_sentence.csv}"
+TRAIN_SENTENCE_CSV="${TRAIN_SENTENCE_CSV:-data/train_sentence_clean.csv,data/final_train_sentence.csv}"
 MODEL_NAME="${MODEL_NAME:-/mnt/nushare2/data/baliao/PLLMs/google/byt5-base}"
-OUTPUT_DIR="${OUTPUT_DIR:-/mnt/nushare2/data/baliao/dpc/v1/ep${EP}bs${BS}lr${LR}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/mnt/nushare2/data/baliao/dpc/v1-base-clean-final/fold0/ep${EP}bs${ACCUM}x${BS}lr${LR}}"
 NUM_FOLDS="${NUM_FOLDS:-10}"
 FOLD_INDEX="${FOLD_INDEX:-0}"
 REPORT_TO="${REPORT_TO:-none}"
@@ -40,6 +41,9 @@ ARGS=(
   --batch-size "${BS}"
   --learning-rate "${LR}"
   --epochs "${EP}"
+  --grad-accum "${ACCUM}"
+  --no-early-stopping
+  --warmup-ratio 0
   --set "LARSEN_LETTERS_PATH=${DPC_EXTRA_DIR}/larsen_letters.csv"
 )
 

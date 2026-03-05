@@ -14,6 +14,7 @@ MASTER_PORT = 2020
 DEFAULT_GRID_LR = ["2e-4", "1e-4", "5e-5"]
 DEFAULT_GRID_BS = ["2", "4"]
 DEFAULT_GRID_EPOCH = ["5", "10"]
+DEFAULT_GRID_GRAD_ACCUM = ["2"]
 
 
 def parse_args():
@@ -52,6 +53,12 @@ def parse_args():
         help="Epoch grid values. Supports comma-separated and/or space-separated values.",
     )
     parser.add_argument(
+        "--grid-grad-accum",
+        nargs="+",
+        default=DEFAULT_GRID_GRAD_ACCUM,
+        help="Grad-accum grid values. Supports comma-separated and/or space-separated values.",
+    )
+    parser.add_argument(
         "--no-grid",
         action="store_true",
         help="Disable grid mode and submit a single job with --single-* values.",
@@ -59,6 +66,13 @@ def parse_args():
     parser.add_argument("--single-lr", type=str, default="2e-4")
     parser.add_argument("--single-bs", type=str, default="4")
     parser.add_argument("--single-epoch", type=str, default="10")
+    parser.add_argument("--single-grad-accum", type=str, default="2")
+    parser.add_argument(
+        "--grad-accum",
+        type=str,
+        default=None,
+        help="Convenience single grad-accum value. In grid mode, overrides grid-grad-accum with one value.",
+    )
     return parser.parse_args()
 
 
@@ -107,6 +121,7 @@ def init_krylov_context():
             'train_lr': context.get('train_lr'),
             'train_bs': context.get('train_bs'),
             'train_epoch': context.get('train_epoch'),
+            'train_grad_accum': context.get('train_grad_accum'),
         }
 
 
@@ -119,6 +134,7 @@ def train():
     train_bs = context.get("train_bs")
     train_lr = context.get("train_lr")
     train_epoch = context.get("train_epoch")
+    train_grad_accum = context.get("train_grad_accum")
 
     run_env = os.environ.copy()
     if train_bs not in (None, ""):
@@ -127,6 +143,8 @@ def train():
         run_env["LR"] = str(train_lr)
     if train_epoch not in (None, ""):
         run_env["EP"] = str(train_epoch)
+    if train_grad_accum not in (None, ""):
+        run_env["ACCUM"] = str(train_grad_accum)
 
     output = subprocess.run([script_path], check=True, env=run_env)
 
@@ -150,21 +168,25 @@ def _safe_tag(value):
 
 def _iter_grid(args):
     if args.no_grid:
-        return [(str(args.single_lr), str(args.single_bs), str(args.single_epoch))]
+        ga = args.grad_accum if args.grad_accum is not None else args.single_grad_accum
+        return [(str(args.single_lr), str(args.single_bs), str(args.single_epoch), str(ga))]
     lrs = _split_csv_list(args.grid_lr)
     bss = _split_csv_list(args.grid_bs)
     eps = _split_csv_list(args.grid_epoch)
-    if not lrs or not bss or not eps:
+    gas = _split_csv_list(args.grid_grad_accum)
+    if args.grad_accum is not None:
+        gas = [str(args.grad_accum)]
+    if not lrs or not bss or not eps or not gas:
         raise ValueError("Grid values cannot be empty.")
-    return list(itertools.product(lrs, bss, eps))
+    return list(itertools.product(lrs, bss, eps, gas))
 
 
-def _submit_one(args, script_basename, lr, bs, ep):
+def _submit_one(args, script_basename, lr, bs, ep, grad_accum):
     # Sanity check
     if args.rack_name is not None:
         assert args.rack_name in ["slc_slc03_01-0200_11_20", "slc_slc03_01-0200_12_20"]
 
-    tag = f"lr{_safe_tag(lr)}-bs{_safe_tag(bs)}-ep{_safe_tag(ep)}"
+    tag = f"lr{_safe_tag(lr)}-bs{_safe_tag(bs)}-ep{_safe_tag(ep)}-acc{_safe_tag(grad_accum)}"
     experiment_id = None
     if not args.cluster == 'tess137':
         experiment_id = pykrylov.ems.experiment.create_experiment(
@@ -218,6 +240,7 @@ def _submit_one(args, script_basename, lr, bs, ep):
             "train_lr": str(lr),
             "train_bs": str(bs),
             "train_epoch": str(ep),
+            "train_grad_accum": str(grad_accum),
         }
     )
     task.set_image(args.image)
@@ -274,8 +297,8 @@ def main(args):
     script_basename = os.path.basename(args.script)
     grid = _iter_grid(args)
     print(f"Submitting {len(grid)} job(s) from grid search...")
-    for lr, bs, ep in grid:
-        _submit_one(args, script_basename, lr, bs, ep)
+    for lr, bs, ep, grad_accum in grid:
+        _submit_one(args, script_basename, lr, bs, ep, grad_accum)
 
     # Keep one canonical monitor line for compatibility
     link = "https://aip.vip.ebay.com/data/experiment-list"
