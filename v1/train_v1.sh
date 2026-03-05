@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+cd /data/${KRYLOV_NAMESPACE}/data/baliao/dpc/dpc/v1
+
 set -euo pipefail
 
 EP="${EP:-10}"
@@ -12,8 +14,8 @@ TRAIN_CSV_PATH="${TRAIN_CSV_PATH:-${TRAIN_CSV_PATH_DEFAULT:-data/train_sentence_
 TRAIN_FINAL_CSV_PATH="${TRAIN_FINAL_CSV_PATH:-${TRAIN_FINAL_CSV_PATH_DEFAULT:-data/final_train_sentence.csv}}"
 
 # Defaults (override via env vars)
-MODEL_NAME="${MODEL_NAME:-/mnt/nushare2/data/baliao/PLLMs/google/byt5-base}"
-OUTPUT_DIR="${OUTPUT_DIR:-/mnt/nushare2/data/baliao/dpc/v1-base-clean-final/fold0/ep${EP}bs${ACCUM}x${BS}lr${LR}}"
+MODEL_NAME="${MODEL_NAME:-/mnt/nushare2/data/baliao/PLLMs/google/byt5-akkadian-optimized-34x}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/mnt/nushare2/data/baliao/dpc/v1-base-optim_clean-final_v1/fold0/ep${EP}bs${ACCUM}x${BS}lr${LR}}"
 NUM_FOLDS="${NUM_FOLDS:-10}"
 FOLD_INDEX="${FOLD_INDEX:-0}"
 
