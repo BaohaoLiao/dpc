@@ -102,7 +102,9 @@ class Config:
         "byt5-akkadian-optimized-34x-mbr-mtg-tbm-new-data-v4"
     )
 
-    HF_CACHE_DIR = f"{OUTPUT_DIR}/hf-cache"
+    HF_CACHE_DIR = (
+        "/kaggle/deep-past-initiative-machine-translation/working/hf-cache"
+    )
 
     DPC_EXTRA_DIR = INPUT_DIR
     MANUAL_EXTRA_DIR = INPUT_DIR
@@ -439,12 +441,30 @@ def _dump_training_config(cfg_cls):
     print("=" * 90, flush=True)
 
 
+def _ensure_writable_hf_cache_dir(path: str) -> str:
+    p = str(path)
+    try:
+        os.makedirs(p, exist_ok=True)
+        return p
+    except PermissionError:
+        fallback = os.path.join(os.getcwd(), ".cache", "hf-cache")
+        os.makedirs(fallback, exist_ok=True)
+        print(
+            f"[CONFIG] HF_CACHE_DIR is not writable: {p}. Using fallback: {fallback}",
+            flush=True,
+        )
+        return fallback
+
+
 _apply_cli_overrides(Config)
+Config.HF_CACHE_DIR = _ensure_writable_hf_cache_dir(
+    getattr(Config, "HF_CACHE_DIR", ".cache/hf-cache")
+)
 
 os.makedirs(Config.OUTPUT_DIR, exist_ok=True)    
-os.makedirs(Config.HF_CACHE_DIR, exist_ok=True)    
-os.environ["HF_DATASETS_CACHE"] = Config.HF_CACHE_DIR
-os.environ["TRANSFORMERS_CACHE"] = Config.HF_CACHE_DIR
+os.makedirs(Config.HF_CACHE_DIR, exist_ok=True)
+os.environ.setdefault("HF_DATASETS_CACHE", Config.HF_CACHE_DIR)
+os.environ.setdefault("TRANSFORMERS_CACHE", Config.HF_CACHE_DIR)
 
 # -------------------------
 # Repro
