@@ -136,6 +136,8 @@ class Config:
     WARMUP_RATIO = 0.05
     RESET_DECODER = False
     USE_VAL_FOR_TRAINING = False  # whether to include val rows in train
+    NPROC = 8
+    MAP_BS = 2048
     EARLY_STOPPING_ENABLE = True
     EARLY_STOPPING_PATIENCE = 3
     EARLY_STOPPING_THRESHOLD = 3e-1
@@ -295,6 +297,8 @@ def _build_arg_parser():
     p.add_argument("--learning-rate", type=float)
     p.add_argument("--label-smoothing", type=float)
     p.add_argument("--warmup-ratio", type=float)
+    p.add_argument("--nproc", type=int)
+    p.add_argument("--map-bs", "--map-batch-size", dest="map_bs", type=int)
     p.add_argument("--early-stopping", dest="early_stopping", action="store_true")
     p.add_argument("--no-early-stopping", dest="early_stopping", action="store_false")
     p.set_defaults(early_stopping=None)
@@ -344,6 +348,8 @@ def _apply_cli_overrides(cfg_cls):
         "learning_rate": "LEARNING_RATE",
         "label_smoothing": "LABEL_SMOOTHING",
         "warmup_ratio": "WARMUP_RATIO",
+        "nproc": "NPROC",
+        "map_bs": "MAP_BS",
         "early_stopping_patience": "EARLY_STOPPING_PATIENCE",
         "early_stopping_threshold": "EARLY_STOPPING_THRESHOLD",
         "ckpt_avg_k": "CKPT_AVG_K",
@@ -5493,8 +5499,8 @@ def main():
         pre=pre,
         canon=canon,
         glosser=glosser,
-        NPROC=8,
-        MAP_BS=2048,
+        NPROC=int(getattr(Config, "NPROC", 8)),
+        MAP_BS=int(getattr(Config, "MAP_BS", 2048)),
     )
 
     # -------------------------

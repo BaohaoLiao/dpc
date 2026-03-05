@@ -8,6 +8,8 @@ EP="${EP:-10}"
 BS="${BS:-4}"
 LR="${LR:-2e-4}"
 ACCUM="${ACCUM:-2}"
+NPROC="${NPROC:-8}"
+MAP_BS="${MAP_BS:-2048}"
 
 # Keep compatibility with old env style: "train.csv,final.csv"
 TRAIN_CSV_PATH="${TRAIN_CSV_PATH:-${TRAIN_CSV_PATH_DEFAULT:-data/train_sentence_clean.csv}}"
@@ -47,6 +49,8 @@ ARGS=(
   --learning-rate "${LR}"
   --epochs "${EP}"
   --grad-accum "${ACCUM}"
+  --nproc 16
+  --map-bs 8096
   --warmup-ratio 0.05
   --num-folds "${NUM_FOLDS}"
   --fold-index "${FOLD_INDEX}"
