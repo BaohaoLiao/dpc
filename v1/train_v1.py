@@ -2766,7 +2766,32 @@ def build_probe_append_text_ds(
             flush=True,
         )
 
-    return Dataset.from_list(rows)
+    ds_probe = Dataset.from_list(rows)
+
+    # Align overlapping column dtypes to base dataset to avoid HF concat schema errors
+    # (e.g., Value("string") vs Value("large_string") on oare_id).
+    if hasattr(base_text_ds, "features") and hasattr(ds_probe, "features"):
+        base_feats = base_text_ds.features
+        for col in ds_probe.column_names:
+            if col not in base_feats:
+                continue
+            src_feat = ds_probe.features[col]
+            tgt_feat = base_feats[col]
+            if src_feat == tgt_feat:
+                continue
+            try:
+                ds_probe = ds_probe.cast_column(col, tgt_feat)
+                print(
+                    f"[PROBE][{label}] cast column '{col}' from {src_feat} to {tgt_feat}",
+                    flush=True,
+                )
+            except Exception as e:
+                print(
+                    f"[PROBE][{label}] warning: failed to cast '{col}' from {src_feat} to {tgt_feat}: {e}",
+                    flush=True,
+                )
+
+    return ds_probe
 
 
 # -------------------------
