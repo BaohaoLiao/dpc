@@ -19,6 +19,11 @@ FOLD_INDEX="${FOLD_INDEX:-0}"
 
 # Required resources (override as needed)
 DPC_EXTRA_DIR="${DPC_EXTRA_DIR:-extra}"
+LEXICON_PATH="${LEXICON_PATH:-${DPC_EXTRA_DIR}/OA_Lexicon_eBL.csv}"
+ONOMASTICON_PATH="${ONOMASTICON_PATH:-${DPC_EXTRA_DIR}/onomasticon.csv}"
+EBL_DICT_PATH="${EBL_DICT_PATH:-${DPC_EXTRA_DIR}/eBL_Dictionary.csv}"
+SENTENCES_PATH="${SENTENCES_PATH:-${DPC_EXTRA_DIR}/Sentences_Oare_FirstWord_LinNum.csv}"
+LARSEN_LETTERS_PATH="${LARSEN_LETTERS_PATH:-${DPC_EXTRA_DIR}/larsen_letters.csv}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -31,11 +36,15 @@ ARGS=(
   --model-name "${MODEL_NAME}"
   --output-dir "${OUTPUT_DIR}"
   --dpc-extra-dir "${DPC_EXTRA_DIR}"
+  --lexicon-path "${LEXICON_PATH}"
+  --onomasticon-path "${ONOMASTICON_PATH}"
+  --ebl-dict-path "${EBL_DICT_PATH}"
+  --sentences-path "${SENTENCES_PATH}"
+  --larsen-letters-path "${LARSEN_LETTERS_PATH}"
   --batch-size "${BS}"
   --learning-rate "${LR}"
   --epochs "${EP}"
   --grad-accum "${ACCUM}"
-  --no-early-stopping
   --warmup-ratio 0.05
   --num-folds "${NUM_FOLDS}"
   --fold-index "${FOLD_INDEX}"

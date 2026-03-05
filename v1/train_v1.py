@@ -351,14 +351,18 @@ def _apply_cli_overrides(cfg_cls):
     }
 
     overrides = {}
+    explicit_keys = set()
     for arg_name, key in mapping.items():
         val = getattr(args, arg_name)
         if val is not None:
             overrides[key] = val
+            explicit_keys.add(key)
     if args.early_stopping is not None:
         overrides["EARLY_STOPPING_ENABLE"] = bool(args.early_stopping)
+        explicit_keys.add("EARLY_STOPPING_ENABLE")
     if args.save_eval_generations is not None:
         overrides["SAVE_EVAL_GENERATIONS"] = bool(args.save_eval_generations)
+        explicit_keys.add("SAVE_EVAL_GENERATIONS")
 
     explicit_hf_cache = args.hf_cache_dir is not None
     for item in args.set:
@@ -369,10 +373,35 @@ def _apply_cli_overrides(cfg_cls):
         if key == "HF_CACHE_DIR":
             explicit_hf_cache = True
         overrides[key] = _parse_override_value(v)
+        explicit_keys.add(key)
 
     if overrides:
         _apply_overrides(cfg_cls, overrides)
         print("[CONFIG] applied overrides:", ", ".join(sorted(overrides.keys())), flush=True)
+
+    # Keep derived paths in sync when base dirs are overridden.
+    if ("DPC_EXTRA_DIR" in explicit_keys) or ("INPUT_DIR" in explicit_keys):
+        extra_base = str(getattr(cfg_cls, "DPC_EXTRA_DIR", ""))
+        input_base = str(getattr(cfg_cls, "INPUT_DIR", ""))
+
+        derived_extra = {
+            "LEXICON_PATH": "OA_Lexicon_eBL.csv",
+            "EBL_DICT_PATH": "eBL_Dictionary.csv",
+            "SENTENCES_PATH": "Sentences_Oare_FirstWord_LinNum.csv",
+            "LARSEN_LETTERS_PATH": "larsen_letters.csv",
+            "ONOMASTICON_PATH": "onomasticon.csv",
+        }
+        for k, rel in derived_extra.items():
+            if k not in explicit_keys:
+                setattr(cfg_cls, k, os.path.join(extra_base, rel))
+
+        derived_input = {
+            "TRAIN_CSV_PATH": "train_sentence_clean.csv",
+            "TRAIN_FINAL_CSV_PATH": "final_train_sentence.csv",
+        }
+        for k, rel in derived_input.items():
+            if ("INPUT_DIR" in explicit_keys) and (k not in explicit_keys):
+                setattr(cfg_cls, k, os.path.join(input_base, rel))
 
     if not explicit_hf_cache:
         cfg_cls.HF_CACHE_DIR = os.path.join(str(cfg_cls.OUTPUT_DIR), "hf-cache")
@@ -387,6 +416,27 @@ def _setup_distributed_device():
         torch.cuda.set_device(local_rank)
 
     return rank, local_rank, world_size
+
+
+def _dump_training_config(cfg_cls):
+    keys = []
+    for k in dir(cfg_cls):
+        if k.startswith("_"):
+            continue
+        v = getattr(cfg_cls, k)
+        if callable(v):
+            continue
+        keys.append(k)
+    keys = sorted(keys)
+    print("=" * 90, flush=True)
+    print("[CONFIG] Effective training config", flush=True)
+    for k in keys:
+        try:
+            v = getattr(cfg_cls, k)
+            print(f"[CONFIG] {k} = {repr(v)}", flush=True)
+        except Exception as e:
+            print(f"[CONFIG] {k} = <error: {e}>", flush=True)
+    print("=" * 90, flush=True)
 
 
 _apply_cli_overrides(Config)
@@ -5239,6 +5289,8 @@ def main():
     rank, local_rank, world_size = _setup_distributed_device()
     if world_size > 1 and rank == 0:
         print(f"[DIST] world_size={world_size} local_rank={local_rank}", flush=True)
+    if rank == 0:
+        _dump_training_config(Config)
 
     # Training
 
