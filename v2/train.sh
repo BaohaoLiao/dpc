@@ -38,7 +38,6 @@ chown -R 110541254:110541254 "/mnt/nushare2/data/baliao/dpc"
 
 ARGS=(
   --train-csv-path "${TRAIN_CSV_PATH}"
-  --train-final-csv-path "${TRAIN_FINAL_CSV_PATH}"
   --model-name "${MODEL_NAME}"
   --output-dir "${OUTPUT_DIR}"
   --dpc-extra-dir "${DPC_EXTRA_DIR}"
@@ -62,6 +61,7 @@ ARGS=(
   --model-parallel-devices "0,1"
   --set "USE_VAL_FOR_TRAINING=True"
   --gradient-checkpointing
+  --set "TRAIN_FINAL_CSV_PATH=None"
 )
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" \
