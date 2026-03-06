@@ -387,6 +387,10 @@ def _apply_cli_overrides(cfg_cls):
         _apply_overrides(cfg_cls, overrides)
         print("[CONFIG] applied overrides:", ", ".join(sorted(overrides.keys())), flush=True)
 
+    # Keep derived training knobs in sync when their source values change.
+    if "K_TRAIN_VARIANTS" not in explicit_keys:
+        cfg_cls.K_TRAIN_VARIANTS = int(float(getattr(cfg_cls, "EPOCHS", 1)) * 1.5)
+
     # Keep derived paths in sync when base dirs are overridden.
     if ("DPC_EXTRA_DIR" in explicit_keys) or ("INPUT_DIR" in explicit_keys):
         extra_base = str(getattr(cfg_cls, "DPC_EXTRA_DIR", ""))
