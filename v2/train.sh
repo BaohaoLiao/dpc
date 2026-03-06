@@ -18,8 +18,8 @@ TRAIN_CSV_PATH="${TRAIN_CSV_PATH:-${TRAIN_CSV_PATH_DEFAULT:-data/train_sentence_
 TRAIN_FINAL_CSV_PATH="${TRAIN_FINAL_CSV_PATH:-${TRAIN_FINAL_CSV_PATH_DEFAULT:-data/final_train_sentence.csv}}"
 
 # Defaults (override via env vars)
-MODEL_NAME="${MODEL_NAME:-/mnt/nushare2/data/baliao/PLLMs/google/byt5-akkadian-optimized-34x}"
-OUTPUT_DIR="${OUTPUT_DIR:-/mnt/nushare2/data/baliao/dpc/test/fold0/ep${EP}bs${ACCUM}x${BS}lr${LR}}"
+MODEL_NAME="${MODEL_NAME:-/mnt/nushare2/data/baliao/PLLMs/google/byt5-xl}"
+OUTPUT_DIR="${OUTPUT_DIR:-/mnt/nushare2/data/baliao/dpc/test-xl/fold0/ep${EP}bs${ACCUM}x${BS}lr${LR}}"
 NUM_FOLDS="${NUM_FOLDS:-10}"
 FOLD_INDEX="${FOLD_INDEX:-0}"
 
@@ -61,6 +61,7 @@ ARGS=(
   --model-parallel "${MODEL_PARALLEL}"
   --model-parallel-devices "0,1"
   --set "USE_VAL_FOR_TRAINING=True"
+  --gradient-checkpointing
 )
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" \
