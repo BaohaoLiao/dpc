@@ -3357,7 +3357,7 @@ def split_group_folds(df: pd.DataFrame, group_col: str, num_folds: int, seed: in
 # Training
 # ================================================================
 
-def run_training():
+def run_training(force_fp32=False):
 
     tokenizer = AutoTokenizer.from_pretrained(Config.MODEL_NAME)
     pre = OptimizedPreprocessor()
@@ -3691,7 +3691,10 @@ def run_training():
     data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
     sanitize_generation_config_for_saving(model, default_num_beams=int(getattr(Config, "NUM_BEAMS", 8)), default_len_pen=float(getattr(Config, "GEN_LENGTH_PENALTY", 1.0)))
 
-    use_bf16 = bool(torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    bf16_supported = bool(torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    use_bf16 = bool((not force_fp32) and bf16_supported)
+    precision_mode = "fp32" if force_fp32 else ("bf16" if use_bf16 else "fp32")
+    print(f"[PRECISION] mode={precision_mode} (force_fp32={bool(force_fp32)}, bf16_supported={bf16_supported})", flush=True)
 
     args = Seq2SeqTrainingArguments(
         output_dir=Config.OUTPUT_DIR,
@@ -4619,6 +4622,11 @@ def _build_arg_parser():
     p.add_argument("--num-beams", type=int)
     p.add_argument("--nproc", type=int)
     p.add_argument("--map-batch-size", type=int)
+    p.add_argument(
+        "--fp32",
+        action="store_true",
+        help="Force fp32 training (disables bf16 mixed precision).",
+    )
 
     p.add_argument(
         "--set",
@@ -4711,7 +4719,7 @@ def main():
         os.environ["WANDB_RUN_NAME"] = str(args.wandb_run_name)
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    run_training()
+    run_training(force_fp32=bool(args.fp32))
 
 
 if __name__ == "__main__":
