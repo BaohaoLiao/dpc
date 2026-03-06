@@ -141,6 +141,7 @@ class Config:
     EARLY_STOPPING_ENABLE = True
     EARLY_STOPPING_PATIENCE = 3
     EARLY_STOPPING_THRESHOLD = 3e-1
+    FORCE_FP32 = False
     
     # ============================================================
     # eval: MBR + gloss sampling
@@ -311,6 +312,7 @@ def _build_arg_parser():
     p.add_argument("--save-eval-generations", dest="save_eval_generations", action="store_true")
     p.add_argument("--no-save-eval-generations", dest="save_eval_generations", action="store_false")
     p.set_defaults(save_eval_generations=None)
+    p.add_argument("--fp32", action="store_true", help="Force fp32 training (disables bf16 mixed precision).")
     p.add_argument("--local-rank", type=int, default=None)
 
     p.add_argument("--set", action="append", default=[], help="Arbitrary override: --set KEY=VALUE")
@@ -371,6 +373,9 @@ def _apply_cli_overrides(cfg_cls):
     if args.save_eval_generations is not None:
         overrides["SAVE_EVAL_GENERATIONS"] = bool(args.save_eval_generations)
         explicit_keys.add("SAVE_EVAL_GENERATIONS")
+    if args.fp32:
+        overrides["FORCE_FP32"] = True
+        explicit_keys.add("FORCE_FP32")
 
     explicit_hf_cache = args.hf_cache_dir is not None
     for item in args.set:
@@ -5587,7 +5592,16 @@ def main():
         default_len_pen=float(getattr(Config, "GEN_LENGTH_PENALTY", 1.0)),
     )
 
-    use_bf16 = bool(torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    force_fp32 = bool(getattr(Config, "FORCE_FP32", False))
+    bf16_supported = bool(torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    use_bf16 = bool((not force_fp32) and bf16_supported)
+    if rank == 0:
+        precision_mode = "fp32" if force_fp32 else ("bf16" if use_bf16 else "fp32")
+        print(
+            f"[PRECISION] mode={precision_mode} "
+            f"(force_fp32={force_fp32}, bf16_supported={bf16_supported})",
+            flush=True,
+        )
 
     args = Seq2SeqTrainingArguments(
         output_dir=Config.OUTPUT_DIR,
