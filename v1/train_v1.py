@@ -3230,8 +3230,10 @@ def average_checkpoints_and_save(
 
     if cleanup_checkpoints:
         save_dir_resolved = Path(save_dir).resolve()
+        keep_dirs = {Path(p).resolve() for p in chosen if os.path.isdir(p)}
+        keep_dirs.add(save_dir_resolved)
         for p in Path(output_dir).glob("checkpoint*"):
-            if p.is_dir() and p.resolve() != save_dir_resolved:
+            if p.is_dir() and p.resolve() not in keep_dirs:
                 shutil.rmtree(p, ignore_errors=True)
 
     return save_dir, chosen
@@ -5766,6 +5768,7 @@ def main():
     do_avg_eval = bool(getattr(Config, "EVAL_AVG_CHECKPOINT", True))
 
     avg_dir = None
+    chosen = []
     if trainer.is_world_process_zero():
         try:
             avg_dir, chosen = average_checkpoints_and_save(
@@ -5816,9 +5819,18 @@ def main():
         torch.distributed.barrier()
 
     if getattr(Config, "CLEAN_CHECKPOINTS", True) and Config.USE_VAL_FOR_TRAINING:
+        keep_checkpoint_dirs = set()
+        if bool(getattr(Config, "CKPT_AVG_CLEANUP", False)):
+            keep_checkpoint_dirs = {
+                os.path.realpath(str(p))
+                for p in (chosen or [])
+                if os.path.isdir(str(p))
+            }
         [shutil.rmtree(os.path.join(Config.OUTPUT_DIR, d), ignore_errors=True)
         for d in os.listdir(Config.OUTPUT_DIR)
-        if d.startswith("checkpoint") and os.path.isdir(os.path.join(Config.OUTPUT_DIR, d))]
+        if d.startswith("checkpoint")
+        and os.path.isdir(os.path.join(Config.OUTPUT_DIR, d))
+        and os.path.realpath(os.path.join(Config.OUTPUT_DIR, d)) not in keep_checkpoint_dirs]
 
     if Config.USE_VAL_FOR_TRAINING:
         _ = inspect_val_predictions_mbr_glosstrainer(
