@@ -489,20 +489,6 @@ def _get_model_stack(model: nn.Module, stack_name: str):
     return None
 
 
-def _get_model_block_count(model: nn.Module) -> Optional[int]:
-    counts = []
-    for stack_name in ("encoder", "decoder"):
-        stack = _get_model_stack(model, stack_name)
-        blocks = getattr(stack, "block", None)
-        if blocks is None:
-            blocks = getattr(stack, "layers", None)
-        if blocks is not None:
-            counts.append(len(blocks))
-    if not counts:
-        return None
-    return int(max(counts))
-
-
 def _build_even_t5_device_map(num_layers: int, device_ids: Sequence[int]) -> Dict[int, List[int]]:
     active_devices = [int(d) for d in device_ids]
     if num_layers <= 0:
@@ -528,7 +514,77 @@ def _build_even_t5_device_map(num_layers: int, device_ids: Sequence[int]) -> Dic
     return out
 
 
+def _invert_layer_map(layer_map: Dict[int, List[int]]) -> Dict[int, int]:
+    out: Dict[int, int] = {}
+    for dev_id, layer_ids in layer_map.items():
+        for layer_id in layer_ids:
+            out[int(layer_id)] = int(dev_id)
+    return out
+
+
+def _resolve_t5_module_device_map(model_name: str, device_ids: Sequence[int]) -> Dict[str, int]:
+    cfg = AutoConfig.from_pretrained(model_name)
+
+    enc_layers = getattr(cfg, "num_layers", None)
+    if enc_layers is None:
+        enc_layers = getattr(cfg, "num_hidden_layers", None)
+    dec_layers = getattr(cfg, "num_decoder_layers", None)
+    if dec_layers is None:
+        dec_layers = enc_layers
+
+    if enc_layers is None or dec_layers is None:
+        raise ValueError(
+            f"Could not infer encoder/decoder layer counts from config for {model_name!r}."
+        )
+
+    enc_layers = int(enc_layers)
+    dec_layers = int(dec_layers)
+    if enc_layers < 1 or dec_layers < 1:
+        raise ValueError(
+            f"Invalid encoder/decoder layer counts for {model_name!r}: "
+            f"encoder={enc_layers}, decoder={dec_layers}."
+        )
+
+    enc_assign = _invert_layer_map(_build_even_t5_device_map(enc_layers, device_ids))
+    dec_assign = _invert_layer_map(_build_even_t5_device_map(dec_layers, device_ids))
+
+    first_enc_device = enc_assign[0]
+    last_enc_device = enc_assign[enc_layers - 1]
+    first_dec_device = dec_assign[0]
+    last_dec_device = dec_assign[dec_layers - 1]
+
+    device_map: Dict[str, int] = {
+        "shared": int(first_enc_device),
+        "encoder.embed_tokens": int(first_enc_device),
+        "encoder.dropout": int(first_enc_device),
+        "encoder.final_layer_norm": int(last_enc_device),
+        "decoder.embed_tokens": int(first_dec_device),
+        "decoder.dropout": int(first_dec_device),
+        "decoder.final_layer_norm": int(last_dec_device),
+        "lm_head": int(last_dec_device),
+    }
+    for layer_id, dev_id in enc_assign.items():
+        device_map[f"encoder.block.{int(layer_id)}"] = int(dev_id)
+    for layer_id, dev_id in dec_assign.items():
+        device_map[f"decoder.block.{int(layer_id)}"] = int(dev_id)
+    return device_map
+
+
 def _get_model_primary_device(model: nn.Module) -> torch.device:
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if isinstance(hf_device_map, dict) and hf_device_map:
+        for key in ("shared", "encoder.embed_tokens", "encoder", "decoder", "lm_head", ""):
+            if key in hf_device_map:
+                dev = hf_device_map[key]
+                if isinstance(dev, int):
+                    return torch.device(f"cuda:{dev}")
+                if isinstance(dev, str) and dev not in {"cpu", "disk"}:
+                    return torch.device(dev)
+        for dev in hf_device_map.values():
+            if isinstance(dev, int):
+                return torch.device(f"cuda:{dev}")
+            if isinstance(dev, str) and dev not in {"cpu", "disk"}:
+                return torch.device(dev)
     for stack_name in ("encoder", "decoder"):
         stack = _get_model_stack(model, stack_name)
         first_device = getattr(stack, "first_device", None) if stack is not None else None
@@ -549,14 +605,15 @@ def _get_model_primary_device_str(model: nn.Module) -> str:
     return str(dev)
 
 
-def _configure_model_parallel(model: nn.Module, cfg_cls, *, rank: int, world_size: int) -> dict:
+def _configure_model_parallel(cfg_cls, *, rank: int, world_size: int) -> dict:
     mode = _normalize_model_parallel_mode(getattr(cfg_cls, "MODEL_PARALLEL", "auto"))
     info = {
         "enabled": False,
         "mode": mode,
         "device_ids": [],
         "device_map": None,
-        "primary_device": _get_model_primary_device_str(model),
+        "primary_device": None,
+        "from_pretrained_kwargs": {},
     }
 
     if mode == "off":
@@ -603,31 +660,15 @@ def _configure_model_parallel(model: nn.Module, cfg_cls, *, rank: int, world_siz
             print(msg + " Skipping.", flush=True)
         return info
 
-    parallelize = getattr(model, "parallelize", None)
-    if not callable(parallelize):
-        msg = (
-            f"[MODEL_PARALLEL] model type {type(model).__name__} does not expose parallelize(); "
-            "cannot enable training-time model parallel."
-        )
-        if mode == "on":
-            raise ValueError(msg)
-        if rank == 0:
-            print(msg + " Skipping.", flush=True)
-        return info
-
-    num_layers = _get_model_block_count(model)
-    if num_layers is None or num_layers < 2:
-        msg = (
-            f"[MODEL_PARALLEL] could not infer encoder/decoder block count for {type(model).__name__}."
-        )
-        if mode == "on":
-            raise ValueError(msg)
-        if rank == 0:
-            print(msg + " Skipping.", flush=True)
-        return info
-
-    device_map = _build_even_t5_device_map(num_layers=int(num_layers), device_ids=device_ids)
-    if len(device_map) < 2:
+    device_map = _resolve_t5_module_device_map(str(getattr(cfg_cls, "MODEL_NAME", "")), device_ids)
+    used_devices = sorted(
+        {
+            int(dev)
+            for dev in device_map.values()
+            if isinstance(dev, int)
+        }
+    )
+    if len(used_devices) < 2:
         msg = (
             f"[MODEL_PARALLEL] resolved fewer than 2 active devices after layer sharding: {device_map}."
         )
@@ -638,24 +679,19 @@ def _configure_model_parallel(model: nn.Module, cfg_cls, *, rank: int, world_siz
         return info
 
     if rank == 0:
+        per_device_module_counts = Counter(int(dev) for dev in device_map.values() if isinstance(dev, int))
         printable_map = ", ".join(
-            f"cuda:{dev}={len(layers)} blocks" for dev, layers in sorted(device_map.items())
+            f"cuda:{dev}={int(per_device_module_counts[dev])} modules" for dev in sorted(per_device_module_counts)
         )
-        print(f"[MODEL_PARALLEL] enabling on {printable_map}", flush=True)
-
-    parallelize(device_map)
-    setattr(model, "is_parallelizable", True)
-    setattr(model, "model_parallel", True)
+        print(f"[MODEL_PARALLEL] loading with device_map on {printable_map}", flush=True)
 
     info.update(
         enabled=True,
-        device_ids=sorted(device_map.keys()),
+        device_ids=used_devices,
         device_map=device_map,
-        primary_device=_get_model_primary_device_str(model),
+        primary_device=f"cuda:{used_devices[0]}",
+        from_pretrained_kwargs={"device_map": device_map},
     )
-
-    if rank == 0:
-        print(f"[MODEL_PARALLEL] primary_device={info['primary_device']}", flush=True)
     return info
 
 
@@ -5577,13 +5613,21 @@ def main():
 
     # Training
 
-    model = AutoModelForSeq2SeqLM.from_pretrained(Config.MODEL_NAME)
     model_parallel_info = _configure_model_parallel(
-        model,
         Config,
         rank=rank,
         world_size=world_size,
     )
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        Config.MODEL_NAME,
+        **dict(model_parallel_info.get("from_pretrained_kwargs", {})),
+    )
+    if bool(model_parallel_info.get("enabled")):
+        setattr(model, "is_parallelizable", True)
+        setattr(model, "model_parallel", True)
+        model_parallel_info["primary_device"] = _get_model_primary_device_str(model)
+        if rank == 0:
+            print(f"[MODEL_PARALLEL] primary_device={model_parallel_info['primary_device']}", flush=True)
 
     if Config.RESET_DECODER:
         _ = reset_t5_decoder(model, seed=Config.SEED)
