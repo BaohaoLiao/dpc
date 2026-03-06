@@ -141,6 +141,7 @@ class Config:
     EARLY_STOPPING_ENABLE = True
     EARLY_STOPPING_PATIENCE = 3
     EARLY_STOPPING_THRESHOLD = 3e-1
+    GRADIENT_CHECKPOINTING = False
     
     # ============================================================
     # eval: MBR + gloss sampling
@@ -306,6 +307,9 @@ def _build_arg_parser():
     p.set_defaults(early_stopping=None)
     p.add_argument("--early-stopping-patience", type=int)
     p.add_argument("--early-stopping-threshold", type=float)
+    p.add_argument("--gradient-checkpointing", dest="gradient_checkpointing", action="store_true")
+    p.add_argument("--no-gradient-checkpointing", dest="gradient_checkpointing", action="store_false")
+    p.set_defaults(gradient_checkpointing=None)
     p.add_argument("--ckpt-avg-k", type=int)
     p.add_argument("--best-metric-key")
     p.add_argument("--eval-generations-prefix")
@@ -356,6 +360,7 @@ def _apply_cli_overrides(cfg_cls):
         "map_bs": "MAP_BS",
         "early_stopping_patience": "EARLY_STOPPING_PATIENCE",
         "early_stopping_threshold": "EARLY_STOPPING_THRESHOLD",
+        "gradient_checkpointing": "GRADIENT_CHECKPOINTING",
         "ckpt_avg_k": "CKPT_AVG_K",
         "best_metric_key": "BEST_METRIC_KEY",
         "eval_generations_prefix": "EVAL_GENERATIONS_PREFIX",
@@ -374,6 +379,9 @@ def _apply_cli_overrides(cfg_cls):
     if args.early_stopping is not None:
         overrides["EARLY_STOPPING_ENABLE"] = bool(args.early_stopping)
         explicit_keys.add("EARLY_STOPPING_ENABLE")
+    if args.gradient_checkpointing is not None:
+        overrides["GRADIENT_CHECKPOINTING"] = bool(args.gradient_checkpointing)
+        explicit_keys.add("GRADIENT_CHECKPOINTING")
     if args.save_eval_generations is not None:
         overrides["SAVE_EVAL_GENERATIONS"] = bool(args.save_eval_generations)
         explicit_keys.add("SAVE_EVAL_GENERATIONS")
@@ -5862,6 +5870,10 @@ def main():
     )
 
     use_bf16 = bool(torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    use_gradient_checkpointing = bool(getattr(Config, "GRADIENT_CHECKPOINTING", False))
+
+    if use_gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
 
     args = Seq2SeqTrainingArguments(
         output_dir=Config.OUTPUT_DIR,
@@ -5877,6 +5889,7 @@ def main():
 
         bf16=use_bf16,
         fp16=False,
+        gradient_checkpointing=use_gradient_checkpointing,
 
         per_device_train_batch_size=Config.BATCH_SIZE,
         per_device_eval_batch_size=32,
@@ -5911,6 +5924,8 @@ def main():
     gen_cfg.no_repeat_ngram_size = int(getattr(Config, "GEN_NO_REPEAT_NGRAM", 0)) or 0
     model.generation_config = gen_cfg
     model.config.use_cache = False
+    if rank == 0:
+        print(f"[TRAIN] gradient_checkpointing={'on' if use_gradient_checkpointing else 'off'}", flush=True)
 
     eval_placeholder = tokenized_val.select(range(min(64, len(tokenized_val)))) if len(tokenized_val) else tokenized_val
     trainer_callbacks = []
