@@ -5362,7 +5362,18 @@ def main():
     # Load comp train/test
     # -------------------------
     comp_df = pd.read_csv(Config.TRAIN_CSV_PATH).assign(is_extra=False)
-    final_comp_df = pd.read_csv(Config.TRAIN_FINAL_CSV_PATH).assign(is_extra=False)
+
+    final_path_raw = getattr(Config, "TRAIN_FINAL_CSV_PATH", "")
+    final_path = "" if final_path_raw is None else str(final_path_raw).strip()
+    if final_path.lower() in {"", "none", "null"}:
+        print("[DATA] TRAIN_FINAL_CSV_PATH disabled; using only TRAIN_CSV_PATH.", flush=True)
+        final_comp_df = pd.DataFrame(
+            columns=["oare_id", "transliteration", "translation", "is_extra"]
+        )
+    else:
+        if not os.path.exists(final_path):
+            raise FileNotFoundError(f"TRAIN_FINAL_CSV_PATH does not exist: {final_path}")
+        final_comp_df = pd.read_csv(final_path).assign(is_extra=False)
 
     # -------------------------
     # Load + normalize ALL extras (Larsen + hybrid + train1..3)
