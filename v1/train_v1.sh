@@ -36,7 +36,6 @@ chown -R 110541254:110541254 "/mnt/nushare2/data/baliao/dpc"
 
 ARGS=(
   --train-csv-path "${TRAIN_CSV_PATH}"
-  --train-final-csv-path "${TRAIN_FINAL_CSV_PATH}"
   --model-name "${MODEL_NAME}"
   --output-dir "${OUTPUT_DIR}"
   --dpc-extra-dir "${DPC_EXTRA_DIR}"
@@ -57,6 +56,7 @@ ARGS=(
   --ckpt-avg-k 3
   --no-early-stopping
   --set "USE_VAL_FOR_TRAINING=True"
+  --set "TRAIN_FINAL_CSV_PATH=None"
 )
 
 python3 train_v1.py "${ARGS[@]}" "$@" > "${OUTPUT_DIR}/log.out" 2> "${OUTPUT_DIR}/log.err"
