@@ -5623,8 +5623,6 @@ def main():
         **dict(model_parallel_info.get("from_pretrained_kwargs", {})),
     )
     if bool(model_parallel_info.get("enabled")):
-        setattr(model, "is_parallelizable", True)
-        setattr(model, "model_parallel", True)
         model_parallel_info["primary_device"] = _get_model_primary_device_str(model)
         if rank == 0:
             print(f"[MODEL_PARALLEL] primary_device={model_parallel_info['primary_device']}", flush=True)
