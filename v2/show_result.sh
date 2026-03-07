@@ -40,7 +40,33 @@ for name in sorted(os.listdir(root)):
 
 rows.sort(key=lambda x: x[0], reverse=True)
 
-print("sub_dir\tbest_eval_geo_mean\teval_hard_geo_mean_at_best_eval_geo_mean")
-for g, hard_g, name in rows:
-    print(f"{name}\t{g:.4f}\t{hard_g:.4f}")
+name_w = max(
+    len("sub_dir"),
+    max((len(name) for _, _, name in rows), default=0),
+)
+
+col_best = "best_eval_geo_mean"
+col_hard = "eval_hard_geo_mean@best_eval_geo_mean"
+col_best_w = len(col_best)
+col_hard_w = len(col_hard)
+
+print(
+    f"{'rank':>4}  "
+    f"{'sub_dir':<{name_w}}  "
+    f"{col_best:>{col_best_w}}  "
+    f"{col_hard:>{col_hard_w}}"
+)
+print(
+    f"{'-' * 4}  "
+    f"{'-' * name_w}  "
+    f"{'-' * col_best_w}  "
+    f"{'-' * col_hard_w}"
+)
+for i, (g, hard_g, name) in enumerate(rows, start=1):
+    print(
+        f"{i:>4}  "
+        f"{name:<{name_w}}  "
+        f"{g:>{col_best_w}.4f}  "
+        f"{hard_g:>{col_hard_w}.4f}"
+    )
 PY
