@@ -49,8 +49,23 @@ def print_table(title, rows, col_1, col_2):
         len("sub_dir"),
         max((len(name) for _, _, name in rows), default=0),
     )
-    col_1_w = len(col_1)
-    col_2_w = len(col_2)
+
+    def fmt_with_delta(v, ref):
+        delta = v - ref
+        if abs(delta) < 5e-5:
+            return f"{v:.4f} (0)"
+        return f"{v:.4f} ({delta:+.4f})"
+
+    if rows:
+        ref_1, ref_2, _ = rows[0]
+        val_1 = [fmt_with_delta(v1, ref_1) for v1, _, _ in rows]
+        val_2 = [fmt_with_delta(v2, ref_2) for _, v2, _ in rows]
+    else:
+        val_1 = []
+        val_2 = []
+
+    col_1_w = max(len(col_1), max((len(v) for v in val_1), default=0))
+    col_2_w = max(len(col_2), max((len(v) for v in val_2), default=0))
 
     print(title)
     print(
@@ -65,12 +80,15 @@ def print_table(title, rows, col_1, col_2):
         f"{'-' * col_1_w}  "
         f"{'-' * col_2_w}"
     )
-    for i, (v1, v2, name) in enumerate(rows, start=1):
+    for i, (name, v1_txt, v2_txt) in enumerate(
+        ((name, v1_txt, v2_txt) for (_, _, name), v1_txt, v2_txt in zip(rows, val_1, val_2)),
+        start=1,
+    ):
         print(
             f"{i:>4}  "
             f"{name:<{name_w}}  "
-            f"{v1:>{col_1_w}.4f}  "
-            f"{v2:>{col_2_w}.4f}"
+            f"{v1_txt:>{col_1_w}}  "
+            f"{v2_txt:>{col_2_w}}"
         )
 
 print_table(
