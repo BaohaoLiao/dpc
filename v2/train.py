@@ -111,6 +111,8 @@ class Config:
 
     PREFIX = "translate Akkadian to English: "
     CLEAN_CHECKPOINTS = True  # whether to delete intermediate checkpoints after training (only keep best)
+    USE_BF16 = True
+    USE_TF32 = True
     
     # ============================================================
     # Lengths / tokenization / generation budget
@@ -292,6 +294,12 @@ def _build_arg_parser():
     p.add_argument("--sentences-path")
 
     p.add_argument("--seed", type=int)
+    p.add_argument("--bf16", dest="use_bf16", action="store_true")
+    p.add_argument("--no-bf16", dest="use_bf16", action="store_false")
+    p.set_defaults(use_bf16=None)
+    p.add_argument("--tf32", dest="use_tf32", action="store_true")
+    p.add_argument("--no-tf32", dest="use_tf32", action="store_false")
+    p.set_defaults(use_tf32=None)
     p.add_argument("--batch-size", type=int)
     p.add_argument("--grad-accum", type=int)
     p.add_argument("--epochs", type=int)
@@ -349,6 +357,8 @@ def _apply_cli_overrides(cfg_cls):
         "larsen_letters_path": "LARSEN_LETTERS_PATH",
         "sentences_path": "SENTENCES_PATH",
         "seed": "SEED",
+        "use_bf16": "USE_BF16",
+        "use_tf32": "USE_TF32",
         "batch_size": "BATCH_SIZE",
         "grad_accum": "GRAD_ACCUM",
         "epochs": "EPOCHS",
@@ -746,7 +756,30 @@ def _ensure_writable_hf_cache_dir(path: str) -> str:
         return fallback
 
 
+def _configure_precision_runtime(cfg_cls) -> None:
+    req_tf32 = bool(getattr(cfg_cls, "USE_TF32", True))
+    if torch.cuda.is_available():
+        try:
+            torch.backends.cuda.matmul.allow_tf32 = req_tf32
+            torch.backends.cudnn.allow_tf32 = req_tf32
+            torch.set_float32_matmul_precision("high" if req_tf32 else "highest")
+        except Exception as e:
+            print(f"[PRECISION] failed to apply TF32 settings: {e}", flush=True)
+    matmul_flag = bool(getattr(torch.backends.cuda.matmul, "allow_tf32", False)) if torch.cuda.is_available() else False
+    cudnn_flag = bool(getattr(torch.backends.cudnn, "allow_tf32", False)) if torch.cuda.is_available() else False
+    try:
+        matmul_prec = torch.get_float32_matmul_precision()
+    except Exception:
+        matmul_prec = "unknown"
+    print(
+        f"[PRECISION] USE_TF32 requested={req_tf32} effective(matmul={matmul_flag}, cudnn={cudnn_flag}) "
+        f"| float32_matmul_precision={matmul_prec}",
+        flush=True,
+    )
+
+
 _apply_cli_overrides(Config)
+_configure_precision_runtime(Config)
 Config.HF_CACHE_DIR = _ensure_writable_hf_cache_dir(
     getattr(Config, "HF_CACHE_DIR", ".cache/hf-cache")
 )
@@ -5938,6 +5971,7 @@ def main():
     # kNN bank (optional) + rebuild-on-best-eval callback (LEAN)
     # -------------------------
     KNN_ENABLE = bool(getattr(Config, "KNN_ENABLE", True)) and Config.USE_VAL_FOR_TRAINING and (rank == 0)
+    knn_use_bf16 = bool(getattr(Config, "KNN_USE_BF16", getattr(Config, "USE_BF16", True)))
 
     knn_mem = None
     if KNN_ENABLE:
@@ -5964,7 +5998,7 @@ def main():
             device=dev_str,
             max_length=int(getattr(Config, "SRC_MAX_LENGTH", 512)),
             batch_size=int(getattr(Config, "KNN_BANK_BS", 128)),
-            use_bf16=bool(getattr(Config, "KNN_USE_BF16", True)),
+            use_bf16=knn_use_bf16,
             rebuild_on_mismatch=True,
         )
         print(f"[kNN] ready: n={len(knn_mem['tgts'])} | cache={KNN_CACHE_DIR}", flush=True)
@@ -5995,8 +6029,18 @@ def main():
         default_len_pen=float(getattr(Config, "GEN_LENGTH_PENALTY", 1.0)),
     )
 
-    use_bf16 = bool(torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    req_bf16 = bool(getattr(Config, "USE_BF16", True))
+    bf16_supported = bool(torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+    use_bf16 = bool(req_bf16 and bf16_supported)
     use_gradient_checkpointing = bool(getattr(Config, "GRADIENT_CHECKPOINTING", False))
+
+    if rank == 0:
+        print(
+            f"[PRECISION] USE_BF16 requested={req_bf16} | cuda={torch.cuda.is_available()} "
+            f"| bf16_supported={bf16_supported} | effective_bf16={use_bf16} | fp16=False",
+            flush=True,
+        )
+        print(f"[PRECISION] KNN_USE_BF16 effective={knn_use_bf16}", flush=True)
 
     if use_gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
         model.gradient_checkpointing_enable()
@@ -6162,7 +6206,7 @@ def main():
             eps=float(getattr(Config, "KNN_MONITOR_EPS", 1e-6)),
             max_length=int(getattr(Config, "SRC_MAX_LENGTH", 512)),
             batch_size=int(getattr(Config, "KNN_BANK_BS", 128)),
-            use_bf16=bool(getattr(Config, "KNN_USE_BF16", True)),
+            use_bf16=knn_use_bf16,
             rebuild_on_mismatch=True,
             also_attach_to_trainer=True,
         ))
