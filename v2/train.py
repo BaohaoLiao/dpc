@@ -131,6 +131,7 @@ class Config:
     VAL_SIZE = 0.001
     NUM_FOLDS = 10
     FOLD_INDEX = 0
+    VAL_HARD_NGRAM = 4
     LEARNING_RATE = 1e-4
     LABEL_SMOOTHING = 0.1
     WARMUP_RATIO = 0.05
@@ -295,6 +296,7 @@ def _build_arg_parser():
     p.add_argument("--grad-accum", type=int)
     p.add_argument("--epochs", type=int)
     p.add_argument("--val-size", type=float)
+    p.add_argument("--val-hard-ngram", type=int)
     p.add_argument("--num-folds", type=int)
     p.add_argument("--fold-index", type=int)
     p.add_argument("--learning-rate", type=float)
@@ -351,6 +353,7 @@ def _apply_cli_overrides(cfg_cls):
         "grad_accum": "GRAD_ACCUM",
         "epochs": "EPOCHS",
         "val_size": "VAL_SIZE",
+        "val_hard_ngram": "VAL_HARD_NGRAM",
         "num_folds": "NUM_FOLDS",
         "fold_index": "FOLD_INDEX",
         "learning_rate": "LEARNING_RATE",
@@ -1661,6 +1664,33 @@ def split_by_oare_id(train_df: pd.DataFrame, val_ratio: float = 0.05, seed: int 
 
 def n_words(s: str) -> int:
     return 0 if pd.isna(s) else len(str(s).split())
+
+
+def _build_ws_ngram_set(texts: Iterable[str], n: int) -> Set[Tuple[str, ...]]:
+    n = int(n)
+    if n <= 0:
+        return set()
+    out: Set[Tuple[str, ...]] = set()
+    for s in texts:
+        toks = str(s).split()
+        if len(toks) < n:
+            continue
+        for i in range(len(toks) - n + 1):
+            out.add(tuple(toks[i : i + n]))
+    return out
+
+
+def _has_ws_ngram_overlap(text: str, ngram_set: Set[Tuple[str, ...]], n: int) -> bool:
+    n = int(n)
+    if n <= 0:
+        return False
+    toks = str(text).split()
+    if len(toks) < n:
+        return False
+    for i in range(len(toks) - n + 1):
+        if tuple(toks[i : i + n]) in ngram_set:
+            return True
+    return False
 
 # -------------------------
 # HF type checks
@@ -3408,15 +3438,57 @@ def _list_checkpoints(output_dir):
     return [c for c in ckpts if os.path.isdir(c)]
 
 
+def _load_sharded_state_dict_from_index(index_path, map_location="cpu"):
+    with open(index_path, "r", encoding="utf-8") as f:
+        index = json.load(f)
+
+    weight_map = index.get("weight_map", {})
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise ValueError(f"Invalid shard index file (missing weight_map): {index_path}")
+
+    ckpt_dir = os.path.dirname(index_path)
+    shard_files = sorted({str(v) for v in weight_map.values()})
+    is_safetensors_index = index_path.endswith(".safetensors.index.json")
+
+    state_dict = {}
+    if is_safetensors_index:
+        from safetensors.torch import load_file as load_safetensors_file
+
+    for shard_name in shard_files:
+        shard_path = os.path.join(ckpt_dir, shard_name)
+        if not os.path.exists(shard_path):
+            raise FileNotFoundError(f"Missing shard referenced by index: {shard_path}")
+
+        if is_safetensors_index:
+            shard_sd = load_safetensors_file(shard_path, device=map_location)
+        else:
+            shard_sd = torch.load(shard_path, map_location=map_location)
+            if isinstance(shard_sd, dict) and "state_dict" in shard_sd and isinstance(shard_sd["state_dict"], dict):
+                shard_sd = shard_sd["state_dict"]
+
+        if not isinstance(shard_sd, dict):
+            raise ValueError(f"Unexpected shard payload type in {shard_path}: {type(shard_sd)}")
+
+        state_dict.update(shard_sd)
+
+    return state_dict
+
+
 def _load_state_dict_any(ckpt_dir, map_location="cpu"):
     st_path = os.path.join(ckpt_dir, "model.safetensors")
     bin_path = os.path.join(ckpt_dir, "pytorch_model.bin")
+    st_index_path = os.path.join(ckpt_dir, "model.safetensors.index.json")
+    bin_index_path = os.path.join(ckpt_dir, "pytorch_model.bin.index.json")
     if os.path.exists(st_path):
         from safetensors.torch import load_file
 
         return load_file(st_path, device=map_location)
     if os.path.exists(bin_path):
         return torch.load(bin_path, map_location=map_location)
+    if os.path.exists(st_index_path):
+        return _load_sharded_state_dict_from_index(st_index_path, map_location=map_location)
+    if os.path.exists(bin_index_path):
+        return _load_sharded_state_dict_from_index(bin_index_path, map_location=map_location)
     raise FileNotFoundError(f"No model weights found in {ckpt_dir}")
 
 
@@ -4185,6 +4257,7 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
         self,
         *args,
         val_text_ds=None,
+        val_hard_text_ds=None,
         pre=None,
         prefix="",
         post=None,            # preds post (should match inference)
@@ -4263,6 +4336,7 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
             raise ValueError("MBRGlossSeq2SeqTrainer requires pre.")
 
         self.val_text_ds = val_text_ds
+        self.val_hard_text_ds = val_hard_text_ds
         self.pre = pre
         self.prefix = str(prefix)
 
@@ -4672,6 +4746,13 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
         metrics = dict(output.metrics)
         if self.is_world_process_zero():
             mbr_metrics = self._evaluate_mbr(metric_key_prefix=metric_key_prefix)
+            has_hard = self.val_hard_text_ds is not None
+            if has_hard:
+                hard_metrics = self._evaluate_mbr(
+                    metric_key_prefix=f"{metric_key_prefix}_hard",
+                    val_source=self.val_hard_text_ds,
+                )
+                mbr_metrics.update(hard_metrics)
         else:
             mbr_metrics = None
         mbr_metrics = self._broadcast_metrics(mbr_metrics)
@@ -4924,11 +5005,23 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
         self,
         metric_key_prefix="eval",
         *,
+        val_source=None,
         save_dir_override: Optional[str] = None,
         file_tag_override: Optional[str] = None,
     ):
-        ex_ids, srcs, refs_raw, oare_ids = _val_unique_examples(self.val_text_ds, prefer_original=True)
+        val_source = self.val_text_ds if val_source is None else val_source
+        ex_ids, srcs, refs_raw, oare_ids = _val_unique_examples(val_source, prefer_original=True)
         refs = [_norm_ws(r) for r in refs_raw]
+
+        if len(refs) == 0:
+            return {
+                f"{metric_key_prefix}_bleu": 0.0,
+                f"{metric_key_prefix}_chrfpp": 0.0,
+                f"{metric_key_prefix}_geo_mean": 0.0,
+                f"{metric_key_prefix}_tbm_hit_rate": 0.0,
+                f"{metric_key_prefix}_knn_hit_rate": 0.0,
+                f"{metric_key_prefix}_mbr_gap_mean": 0.0,
+            }
 
         preds, pools_txt, pools_tag, chosen_tags, diag = self._mbr_from_sources(
             list(srcs),
@@ -4964,7 +5057,8 @@ class MBRGlossSeq2SeqTrainer(Seq2SeqTrainer):
                     save_dir = ckpt_dir if os.path.isdir(ckpt_dir) else out_dir
 
                 os.makedirs(save_dir, exist_ok=True)
-                out_path = os.path.join(save_dir, f"{prefix}_{tag}.csv")
+                metric_suffix = "" if str(metric_key_prefix) == "eval" else f"_{metric_key_prefix}"
+                out_path = os.path.join(save_dir, f"{prefix}{metric_suffix}_{tag}.csv")
                 df_out = pd.DataFrame(
                     {
                         "oare_id": [str(x) if x is not None else "" for x in oare_ids],
@@ -5776,6 +5870,32 @@ def main():
     )
     print(f"[VAL_LEN_CAP] kept={len(val_for_tokenize)}/{before} | dropped={before-len(val_for_tokenize)}", flush=True)
 
+    val_hard_ngram = int(getattr(Config, "VAL_HARD_NGRAM", 4))
+    if val_hard_ngram <= 0:
+        val_hard_for_tokenize = val_for_tokenize
+        print(
+            f"[VAL_HARD] disabled (VAL_HARD_NGRAM={val_hard_ngram}); using regular validation set.",
+            flush=True,
+        )
+    else:
+        train_ngram_set = _build_ws_ngram_set(
+            train_split_df["transliteration"].astype(str).tolist(),
+            val_hard_ngram,
+        )
+        val_df_tmp = val_for_tokenize.to_pandas()
+        keep_mask = val_df_tmp["transliteration"].astype(str).map(
+            lambda s: not _has_ws_ngram_overlap(str(s), train_ngram_set, val_hard_ngram)
+        )
+        kept = int(keep_mask.sum())
+        removed = int(len(keep_mask) - kept)
+        val_hard_df = val_df_tmp.loc[keep_mask].reset_index(drop=True)
+        val_hard_for_tokenize = Dataset.from_pandas(val_hard_df, preserve_index=False)
+        print(
+            f"[VAL_HARD] n={val_hard_ngram} | kept={kept}/{len(val_for_tokenize)} "
+            f"| removed_overlap={removed}",
+            flush=True,
+        )
+
     # -------------------------
     # PN+gloss resources (built AFTER cleaning)
     # -------------------------
@@ -5890,7 +6010,7 @@ def main():
         save_total_limit=20,
         save_only_model=True,
         load_best_model_at_end=True if Config.USE_VAL_FOR_TRAINING else False,
-        metric_for_best_model="eval_geo_mean",
+        metric_for_best_model=str(getattr(Config, "BEST_METRIC_KEY", "eval_geo_mean")),
         greater_is_better=True,
 
         bf16=use_bf16,
@@ -5964,6 +6084,7 @@ def main():
         callbacks=trainer_callbacks,
 
         val_text_ds=val_for_tokenize,
+        val_hard_text_ds=val_hard_for_tokenize,
         pre=pre,
         prefix=Config.PREFIX,
 
@@ -6102,6 +6223,14 @@ def main():
                 save_dir_override=avg_eval_dir,
                 file_tag_override="avg",
             )
+            if getattr(trainer, "val_hard_text_ds", None) is not None:
+                avg_hard_metrics = trainer._evaluate_mbr(
+                    metric_key_prefix=f"{avg_prefix}_hard",
+                    val_source=trainer.val_hard_text_ds,
+                    save_dir_override=avg_eval_dir,
+                    file_tag_override="avg_hard",
+                )
+                avg_metrics.update(avg_hard_metrics)
             avg_metrics_path = os.path.join(avg_eval_dir, f"{avg_prefix}_metrics.json")
             with open(avg_metrics_path, "w", encoding="utf-8") as f:
                 json.dump(avg_metrics, f, indent=2)
@@ -6116,6 +6245,16 @@ def main():
     if getattr(Config, "CLEAN_CHECKPOINTS", True) and Config.USE_VAL_FOR_TRAINING:
         keep_checkpoint_dirs = set()
         if bool(getattr(Config, "CKPT_AVG_CLEANUP", False)):
+            # Keep best-k checkpoints selected by metric, even if averaging failed.
+            if not chosen:
+                try:
+                    chosen = _choose_best_k_by_metric(
+                        Config.OUTPUT_DIR,
+                        k=ckpt_avg_k,
+                        metric_key=best_metric_key,
+                    )
+                except Exception:
+                    chosen = []
             keep_checkpoint_dirs = {
                 os.path.realpath(str(p))
                 for p in (chosen or [])
