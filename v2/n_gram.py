@@ -227,6 +227,10 @@ def _ngram_counts(texts: Iterable[str], n: int) -> Counter[tuple[str, ...]]:
     return out
 
 
+def _format_ngram(ng: tuple[str, ...]) -> str:
+    return " ".join(ng)
+
+
 def _report_overlap(train_df: pd.DataFrame, val_df: pd.DataFrame, min_n: int, max_n: int) -> None:
     train_texts = train_df["transliteration"].astype(str).tolist()
     val_texts = val_df["transliteration"].astype(str).tolist()
@@ -260,6 +264,20 @@ def _report_overlap(train_df: pd.DataFrame, val_df: pd.DataFrame, min_n: int, ma
             f"val_occ_overlap={val_occ_overlap}/{val_occ_total} ({occ_overlap_pct:.2f}%)",
             flush=True,
         )
+        top_overlap = sorted(
+            overlap_set,
+            key=lambda g: (-val_cnt[g], -train_cnt[g], g),
+        )[:2]
+        if top_overlap:
+            ex = " | ".join(
+                [
+                    f"'{_format_ngram(g)}' (val={val_cnt[g]}, train={train_cnt[g]})"
+                    for g in top_overlap
+                ]
+            )
+            print(f"[NGRAM_OVERLAP_EXAMPLES] n={n} | {ex}", flush=True)
+        else:
+            print(f"[NGRAM_OVERLAP_EXAMPLES] n={n} | <none>", flush=True)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
