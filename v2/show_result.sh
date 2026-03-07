@@ -2,7 +2,8 @@ python3 - <<'PY'
 import os, re, ast
 
 root = "/mnt/nushare2/data/baliao/dpc/v2-base-optim_clean-final_fp32/fold0"
-rows = []
+rows_best_geo = []
+rows_best_hard = []
 
 key = "eval_geo_mean"
 hard_key = "eval_hard_geo_mean"
@@ -15,10 +16,11 @@ for name in sorted(os.listdir(root)):
     if not os.path.exists(logp):
         continue
 
-    best = None
+    best_geo = None
+    best_hard = None
     with open(logp, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            if key not in line:
+            if key not in line and hard_key not in line:
                 continue
             m = re.search(r"\{.*\}", line)
             if not m:
@@ -26,47 +28,63 @@ for name in sorted(os.listdir(root)):
             try:
                 rec = ast.literal_eval(m.group(0))
                 g = float(str(rec.get(key)))
+                hard_g = float(str(rec.get(hard_key)))
             except Exception:
                 continue
-            if best is None or g > best[0]:
-                best = (g, rec)
+            if best_geo is None or g > best_geo[0]:
+                best_geo = (g, hard_g)
+            if best_hard is None or hard_g > best_hard[1]:
+                best_hard = (g, hard_g)
 
-    if best is not None:
-        try:
-            hard_g = float(str(best[1].get(hard_key)))
-        except Exception:
-            hard_g = float("nan")
-        rows.append((best[0], hard_g, name))
+    if best_geo is not None:
+        rows_best_geo.append((best_geo[0], best_geo[1], name))
+    if best_hard is not None:
+        rows_best_hard.append((best_hard[0], best_hard[1], name))
 
-rows.sort(key=lambda x: x[0], reverse=True)
+rows_best_geo.sort(key=lambda x: x[0], reverse=True)
+rows_best_hard.sort(key=lambda x: x[1], reverse=True)
 
-name_w = max(
-    len("sub_dir"),
-    max((len(name) for _, _, name in rows), default=0),
-)
-
-col_best = "best_eval_geo_mean"
-col_hard = "eval_hard_geo_mean@best_eval_geo_mean"
-col_best_w = len(col_best)
-col_hard_w = len(col_hard)
-
-print(
-    f"{'rank':>4}  "
-    f"{'sub_dir':<{name_w}}  "
-    f"{col_best:>{col_best_w}}  "
-    f"{col_hard:>{col_hard_w}}"
-)
-print(
-    f"{'-' * 4}  "
-    f"{'-' * name_w}  "
-    f"{'-' * col_best_w}  "
-    f"{'-' * col_hard_w}"
-)
-for i, (g, hard_g, name) in enumerate(rows, start=1):
-    print(
-        f"{i:>4}  "
-        f"{name:<{name_w}}  "
-        f"{g:>{col_best_w}.4f}  "
-        f"{hard_g:>{col_hard_w}.4f}"
+def print_table(title, rows, col_1, col_2):
+    name_w = max(
+        len("sub_dir"),
+        max((len(name) for _, _, name in rows), default=0),
     )
+    col_1_w = len(col_1)
+    col_2_w = len(col_2)
+
+    print(title)
+    print(
+        f"{'rank':>4}  "
+        f"{'sub_dir':<{name_w}}  "
+        f"{col_1:>{col_1_w}}  "
+        f"{col_2:>{col_2_w}}"
+    )
+    print(
+        f"{'-' * 4}  "
+        f"{'-' * name_w}  "
+        f"{'-' * col_1_w}  "
+        f"{'-' * col_2_w}"
+    )
+    for i, (v1, v2, name) in enumerate(rows, start=1):
+        print(
+            f"{i:>4}  "
+            f"{name:<{name_w}}  "
+            f"{v1:>{col_1_w}.4f}  "
+            f"{v2:>{col_2_w}.4f}"
+        )
+
+print_table(
+    "Table 1: best eval_geo_mean",
+    rows_best_geo,
+    "best_eval_geo_mean",
+    "eval_hard_geo_mean@best_eval_geo_mean",
+)
+
+print()
+print_table(
+    "Table 2: best eval_hard_geo_mean",
+    rows_best_hard,
+    "eval_geo_mean@best_eval_hard_geo_mean",
+    "best_eval_hard_geo_mean",
+)
 PY
