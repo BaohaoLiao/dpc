@@ -29,17 +29,18 @@ for name in sorted(os.listdir(root)):
                 rec = ast.literal_eval(m.group(0))
                 g = float(str(rec.get(key)))
                 hard_g = float(str(rec.get(hard_key)))
+                epoch = float(str(rec.get("epoch")))
             except Exception:
                 continue
             if best_geo is None or g > best_geo[0]:
-                best_geo = (g, hard_g)
+                best_geo = (g, hard_g, epoch)
             if best_hard is None or hard_g > best_hard[1]:
-                best_hard = (g, hard_g)
+                best_hard = (g, hard_g, epoch)
 
     if best_geo is not None:
-        rows_best_geo.append((best_geo[0], best_geo[1], name))
+        rows_best_geo.append((best_geo[0], best_geo[1], best_geo[2], name))
     if best_hard is not None:
-        rows_best_hard.append((best_hard[0], best_hard[1], name))
+        rows_best_hard.append((best_hard[0], best_hard[1], best_hard[2], name))
 
 rows_best_geo.sort(key=lambda x: x[0], reverse=True)
 rows_best_hard.sort(key=lambda x: x[1], reverse=True)
@@ -47,7 +48,7 @@ rows_best_hard.sort(key=lambda x: x[1], reverse=True)
 def print_table(title, rows, col_1, col_2, rank_ref_map=None):
     name_w = max(
         len("sub_dir"),
-        max((len(name) for _, _, name in rows), default=0),
+        max((len(name) for _, _, _, name in rows), default=0),
     )
 
     def fmt_with_delta(v, ref):
@@ -56,16 +57,26 @@ def print_table(title, rows, col_1, col_2, rank_ref_map=None):
             return f"{v:.4f} (0)"
         return f"{v:.4f} ({delta:+.4f})"
 
+    def fmt_epoch(e):
+        if e != e:
+            return "nan"
+        if abs(e - round(e)) < 1e-8:
+            return str(int(round(e)))
+        return f"{e:.2f}".rstrip("0").rstrip(".")
+
     if rows:
-        ref_1, ref_2, _ = rows[0]
-        val_1 = [fmt_with_delta(v1, ref_1) for v1, _, _ in rows]
-        val_2 = [fmt_with_delta(v2, ref_2) for _, v2, _ in rows]
+        ref_1, ref_2, _, _ = rows[0]
+        val_1 = [fmt_with_delta(v1, ref_1) for v1, _, _, _ in rows]
+        val_2 = [fmt_with_delta(v2, ref_2) for _, v2, _, _ in rows]
+        val_epoch = [fmt_epoch(epoch) for _, _, epoch, _ in rows]
     else:
         val_1 = []
         val_2 = []
+        val_epoch = []
 
     col_1_w = max(len(col_1), max((len(v) for v in val_1), default=0))
     col_2_w = max(len(col_2), max((len(v) for v in val_2), default=0))
+    col_epoch_w = max(len("epoch"), max((len(v) for v in val_epoch), default=0))
 
     with_change_col = rank_ref_map is not None
     if with_change_col:
@@ -75,14 +86,16 @@ def print_table(title, rows, col_1, col_2, rank_ref_map=None):
             f"{'chg':>3}  "
             f"{'sub_dir':<{name_w}}  "
             f"{col_1:>{col_1_w}}  "
-            f"{col_2:>{col_2_w}}"
+            f"{col_2:>{col_2_w}}  "
+            f"{'epoch':>{col_epoch_w}}"
         )
         print(
             f"{'-' * 4}  "
             f"{'-' * 3}  "
             f"{'-' * name_w}  "
             f"{'-' * col_1_w}  "
-            f"{'-' * col_2_w}"
+            f"{'-' * col_2_w}  "
+            f"{'-' * col_epoch_w}"
         )
     else:
         print(title)
@@ -90,18 +103,23 @@ def print_table(title, rows, col_1, col_2, rank_ref_map=None):
             f"{'rank':>4}  "
             f"{'sub_dir':<{name_w}}  "
             f"{col_1:>{col_1_w}}  "
-            f"{col_2:>{col_2_w}}"
+            f"{col_2:>{col_2_w}}  "
+            f"{'epoch':>{col_epoch_w}}"
         )
         print(
             f"{'-' * 4}  "
             f"{'-' * name_w}  "
             f"{'-' * col_1_w}  "
-            f"{'-' * col_2_w}"
+            f"{'-' * col_2_w}  "
+            f"{'-' * col_epoch_w}"
         )
 
     has_change = False
-    for i, (name, v1_txt, v2_txt) in enumerate(
-        ((name, v1_txt, v2_txt) for (_, _, name), v1_txt, v2_txt in zip(rows, val_1, val_2)),
+    for i, (name, v1_txt, v2_txt, epoch_txt) in enumerate(
+        (
+            (name, v1_txt, v2_txt, epoch_txt)
+            for (_, _, _, name), v1_txt, v2_txt, epoch_txt in zip(rows, val_1, val_2, val_epoch)
+        ),
         start=1,
     ):
         if with_change_col:
@@ -115,20 +133,22 @@ def print_table(title, rows, col_1, col_2, rank_ref_map=None):
                 f"{mark:>3}  "
                 f"{name:<{name_w}}  "
                 f"{v1_txt:>{col_1_w}}  "
-                f"{v2_txt:>{col_2_w}}"
+                f"{v2_txt:>{col_2_w}}  "
+                f"{epoch_txt:>{col_epoch_w}}"
             )
         else:
             print(
                 f"{i:>4}  "
                 f"{name:<{name_w}}  "
                 f"{v1_txt:>{col_1_w}}  "
-                f"{v2_txt:>{col_2_w}}"
+                f"{v2_txt:>{col_2_w}}  "
+                f"{epoch_txt:>{col_epoch_w}}"
             )
     if with_change_col and has_change:
         print("* `chg=*` means rank differs from Table 1")
 
 
-rank_map_geo = {name: i for i, (_, _, name) in enumerate(rows_best_geo, start=1)}
+rank_map_geo = {name: i for i, (_, _, _, name) in enumerate(rows_best_geo, start=1)}
 
 print_table(
     "Table 1: best eval_geo_mean",
