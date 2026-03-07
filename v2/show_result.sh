@@ -44,7 +44,7 @@ for name in sorted(os.listdir(root)):
 rows_best_geo.sort(key=lambda x: x[0], reverse=True)
 rows_best_hard.sort(key=lambda x: x[1], reverse=True)
 
-def print_table(title, rows, col_1, col_2):
+def print_table(title, rows, col_1, col_2, rank_ref_map=None):
     name_w = max(
         len("sub_dir"),
         max((len(name) for _, _, name in rows), default=0),
@@ -67,29 +67,68 @@ def print_table(title, rows, col_1, col_2):
     col_1_w = max(len(col_1), max((len(v) for v in val_1), default=0))
     col_2_w = max(len(col_2), max((len(v) for v in val_2), default=0))
 
-    print(title)
-    print(
-        f"{'rank':>4}  "
-        f"{'sub_dir':<{name_w}}  "
-        f"{col_1:>{col_1_w}}  "
-        f"{col_2:>{col_2_w}}"
-    )
-    print(
-        f"{'-' * 4}  "
-        f"{'-' * name_w}  "
-        f"{'-' * col_1_w}  "
-        f"{'-' * col_2_w}"
-    )
+    with_change_col = rank_ref_map is not None
+    if with_change_col:
+        print(title)
+        print(
+            f"{'rank':>4}  "
+            f"{'chg':>3}  "
+            f"{'sub_dir':<{name_w}}  "
+            f"{col_1:>{col_1_w}}  "
+            f"{col_2:>{col_2_w}}"
+        )
+        print(
+            f"{'-' * 4}  "
+            f"{'-' * 3}  "
+            f"{'-' * name_w}  "
+            f"{'-' * col_1_w}  "
+            f"{'-' * col_2_w}"
+        )
+    else:
+        print(title)
+        print(
+            f"{'rank':>4}  "
+            f"{'sub_dir':<{name_w}}  "
+            f"{col_1:>{col_1_w}}  "
+            f"{col_2:>{col_2_w}}"
+        )
+        print(
+            f"{'-' * 4}  "
+            f"{'-' * name_w}  "
+            f"{'-' * col_1_w}  "
+            f"{'-' * col_2_w}"
+        )
+
+    has_change = False
     for i, (name, v1_txt, v2_txt) in enumerate(
         ((name, v1_txt, v2_txt) for (_, _, name), v1_txt, v2_txt in zip(rows, val_1, val_2)),
         start=1,
     ):
-        print(
-            f"{i:>4}  "
-            f"{name:<{name_w}}  "
-            f"{v1_txt:>{col_1_w}}  "
-            f"{v2_txt:>{col_2_w}}"
-        )
+        if with_change_col:
+            mark = ""
+            ref_rank = rank_ref_map.get(name)
+            if ref_rank is not None and ref_rank != i:
+                mark = "*"
+                has_change = True
+            print(
+                f"{i:>4}  "
+                f"{mark:>3}  "
+                f"{name:<{name_w}}  "
+                f"{v1_txt:>{col_1_w}}  "
+                f"{v2_txt:>{col_2_w}}"
+            )
+        else:
+            print(
+                f"{i:>4}  "
+                f"{name:<{name_w}}  "
+                f"{v1_txt:>{col_1_w}}  "
+                f"{v2_txt:>{col_2_w}}"
+            )
+    if with_change_col and has_change:
+        print("* `chg=*` means rank differs from Table 1")
+
+
+rank_map_geo = {name: i for i, (_, _, name) in enumerate(rows_best_geo, start=1)}
 
 print_table(
     "Table 1: best eval_geo_mean",
@@ -104,5 +143,6 @@ print_table(
     rows_best_hard,
     "eval_geo_mean@best_eval_hard_geo_mean",
     "best_eval_hard_geo_mean",
+    rank_ref_map=rank_map_geo,
 )
 PY
